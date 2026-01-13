@@ -616,7 +616,7 @@ class OmegaConf:
     def is_missing(cfg: Any, key: DictKeyType) -> bool:
         assert isinstance(cfg, Container)
         try:
-            node = cfg._get_child(key)
+            node = cfg._get_node(key)
             if node is None:
                 return False
             assert isinstance(node, Node)
@@ -628,7 +628,7 @@ class OmegaConf:
     def is_interpolation(node: Any, key: Optional[Union[int, str]] = None) -> bool:
         if key is not None:
             assert isinstance(node, Container)
-            target = node._get_child(key)
+            target = node._get_node(key)
         else:
             target = node
         if target is not None:
@@ -1064,17 +1064,17 @@ def _node_wrap(
             parent=parent,
             is_optional=is_optional,
         )
-    elif ref_type == int:
+    elif ref_type is int:
         node = IntegerNode(value=value, key=key, parent=parent, is_optional=is_optional)
-    elif ref_type == float:
+    elif ref_type is float:
         node = FloatNode(value=value, key=key, parent=parent, is_optional=is_optional)
-    elif ref_type == bool:
+    elif ref_type is bool:
         node = BooleanNode(value=value, key=key, parent=parent, is_optional=is_optional)
-    elif ref_type == str:
+    elif ref_type is str:
         node = StringNode(value=value, key=key, parent=parent, is_optional=is_optional)
-    elif ref_type == bytes:
+    elif ref_type is bytes:
         node = BytesNode(value=value, key=key, parent=parent, is_optional=is_optional)
-    elif ref_type == pathlib.Path:
+    elif ref_type is pathlib.Path:
         node = PathNode(value=value, key=key, parent=parent, is_optional=is_optional)
     else:
         if parent is not None and parent._get_flag("allow_objects") is True:

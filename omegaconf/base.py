@@ -15,6 +15,7 @@ from ._utils import (
     _is_missing_value,
     _is_special,
     format_and_raise,
+    get_union_candidates,
     get_value_kind,
     is_union_annotation,
     is_valid_value_annotation,
@@ -830,6 +831,7 @@ class UnionNode(Box):
                     flags={"convert": False},
                 ),
             )
+            self.__dict__["_candidates"] = get_union_candidates(ref_type)
             self._set_value(content)
         except Exception as ex:
             format_and_raise(node=None, key=key, value=content, msg=str(ex), cause=ex)
@@ -882,6 +884,7 @@ class UnionNode(Box):
     def _set_value_impl(
         self, value: Any, flags: Optional[Dict[str, bool]] = None
     ) -> None:
+        from omegaconf.dictconfig import DictConfig
         from omegaconf.omegaconf import _node_wrap
 
         ref_type = self._metadata.ref_type
@@ -896,27 +899,183 @@ class UnionNode(Box):
                         f"Value '$VALUE' is incompatible with type hint '{type_str(type_hint)}'"
                     )
             self.__dict__["_content"] = value
-        elif isinstance(value, Container):
-            raise ValidationError(
-                f"Cannot assign container '$VALUE' of type '$VALUE_TYPE' to {type_str(type_hint)}"
-            )
-        else:
-            for candidate_ref_type in ref_type.__args__:
+            self.__dict__["_content"] = value
+            return
+
+        # Explicit selection via _type_ field in dict/DictConfig
+        type_override = None
+        if isinstance(value, dict):
+            type_override = value.get("_type_")
+        elif isinstance(value, DictConfig):
+            type_override = value.get("_type_")
+
+        if type_override is not None:
+            candidates = self.__dict__["_candidates"]
+            candidate_ref_type = None
+
+            # 1. Try matching simple name in candidates
+            if type_override in candidates:
+                candidate_ref_type = candidates[type_override]
+
+            # 2. Try resolving fully qualified name
+            if candidate_ref_type is None:
+                from omegaconf._utils import _get_class
+
                 try:
-                    self.__dict__["_content"] = _node_wrap(
-                        value=value,
+                    resolved_class = _get_class(type_override)
+                    # Check if resolved class is one of the candidates
+                    for cand in ref_type.__args__:
+                        # We need to handle comparison carefully.
+                        # ref_type args are classes.
+                        # We compare origin if generic?
+                        cand_orig = getattr(cand, "__origin__", cand)
+                        if cand_orig == resolved_class:
+                            candidate_ref_type = cand
+                            break
+                except (ImportError, ValueError):
+                    pass
+
+            if candidate_ref_type is not None:
+                try:
+                    # Create the node from the candidate class first to ensure defaults are populated
+                    # and object_type is set correctly.
+                    node = _node_wrap(
+                        value=candidate_ref_type,
                         ref_type=candidate_ref_type,
                         is_optional=False,
                         key=None,
                         parent=self,
                     )
-                    break
+
+                    # Prepare value for merge: remove _type_ if present to avoid extra key error
+                    # if the target class doesn't have _type_ field.
+                    merge_value = value
+                    if isinstance(value, dict) and "_type_" in value:
+                        merge_value = value.copy()
+                        merge_value.pop("_type_")
+                    elif isinstance(value, DictConfig) and "_type_" in value:
+                        # DictConfig is mutable but we shouldn't modify the input 'value' if it's referenced elsewhere
+                        # Safe option: convert to dict, pop _type_.
+                        from omegaconf import OmegaConf
+
+                        merge_value = OmegaConf.to_container(value, resolve=False)
+                        if isinstance(merge_value, dict) and "_type_" in merge_value:
+                            merge_value.pop("_type_")
+
+                    if isinstance(merge_value, (dict, Container)):
+                        node.merge_with(merge_value)
+                    else:
+                        # Should not happen given outer checks
+                        pass
+
+                    self.__dict__["_content"] = node
+                    return
                 except ValidationError:
-                    continue
-            else:
-                raise ValidationError(
-                    f"Value '$VALUE' of type '$VALUE_TYPE' is incompatible with type hint '{type_str(type_hint)}'"
+                    raise
+
+        if isinstance(value, Container):
+            content = self.__dict__["_content"]
+            if isinstance(content, Container):
+                content._set_value(value, flags=flags)
+                return
+
+        # Explicit selection via string
+        if isinstance(value, str):
+            candidates = self.__dict__["_candidates"]
+            if value in candidates:
+                candidate_ref_type = candidates[value]
+                self.__dict__["_content"] = _node_wrap(
+                    value=candidate_ref_type,
+                    ref_type=candidate_ref_type,
+                    is_optional=False,
+                    key=None,
+                    parent=self,
                 )
+                return
+
+        for candidate_ref_type in ref_type.__args__:
+            try:
+                self.__dict__["_content"] = _node_wrap(
+                    value=value,
+                    ref_type=candidate_ref_type,
+                    is_optional=False,
+                    key=None,
+                    parent=self,
+                )
+                break
+            except ValidationError:
+                continue
+        else:
+            raise ValidationError(
+                f"Value '$VALUE' of type '$VALUE_TYPE' is incompatible with type hint '{type_str(type_hint)}'"
+            )
+
+    def _dereference_node_impl(
+        self,
+        throw_on_resolution_failure: bool,
+        memo: Optional[Set[int]] = None,
+    ) -> Optional["Node"]:
+        content = self.__dict__["_content"]
+        if isinstance(content, Node):
+            return content._dereference_node_impl(
+                throw_on_resolution_failure=throw_on_resolution_failure,
+                memo=memo,
+            )
+
+        if not _is_special(content) or not _is_interpolation(content):
+            return self
+
+        res = super()._dereference_node_impl(
+            throw_on_resolution_failure=throw_on_resolution_failure,
+            memo=memo,
+        )
+
+        if res is self:
+            return self
+
+        # If res is not self, it means it was an interpolation.
+        # Check if the result of interpolation is a string that matches a candidate.
+        from omegaconf.omegaconf import _node_wrap
+
+        val = _get_value(res)
+        if isinstance(val, str):
+            candidates = self.__dict__["_candidates"]
+            if val in candidates:
+                candidate_ref_type = candidates[val]
+                # Return a temporary node for this access.
+                return _node_wrap(
+                    value=candidate_ref_type,
+                    ref_type=candidate_ref_type,
+                    is_optional=False,
+                    key=self._metadata.key,
+                    parent=self._get_parent(),
+                )
+        return res
+
+    def __getattr__(self, name: str) -> Any:
+        if name in self.__dict__:
+            return self.__dict__[name]
+
+        resolved = self._maybe_dereference_node()
+        if resolved is self:
+            content = self.__dict__["_content"]
+            if isinstance(content, Node):
+                return getattr(content, name)
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            )
+
+        return getattr(resolved, name)
+
+    def __getitem__(self, key: Any) -> Any:
+        resolved = self._maybe_dereference_node()
+        if resolved is self:
+            content = self.__dict__["_content"]
+            if isinstance(content, Node):
+                return content[key]
+            raise TypeError(f"'{type(self).__name__}' object is not subscriptable")
+
+        return resolved[key]
 
     def _is_optional(self) -> bool:
         return self.__dict__["_metadata"].optional is True

@@ -8,6 +8,7 @@ import yaml
 
 from ._utils import (
     _DEFAULT_MARKER_,
+    NoneType,
     ValueKind,
     _ensure_container,
     _get_value,
@@ -77,10 +78,6 @@ class BaseContainer(Container, ABC):
             throw_on_missing_value=throw_on_missing_value,
             throw_on_missing_key=throw_on_missing_key,
         )
-        if isinstance(child, UnionNode) and not _is_special(child):
-            value = child._value()
-            assert isinstance(value, Node) and not isinstance(value, UnionNode)
-            child = value
         return child
 
     def _resolve_with_default(
@@ -95,12 +92,17 @@ class BaseContainer(Container, ABC):
                 return default_value
             raise MissingMandatoryValue("Missing mandatory value: $FULL_KEY")
 
-        resolved_node = self._maybe_resolve_interpolation(
-            parent=self,
-            key=key,
-            value=value,
-            throw_on_resolution_failure=True,
-        )
+        from omegaconf.base import UnionNode
+
+        if isinstance(value, UnionNode):
+            resolved_node = value._dereference_node()
+        else:
+            resolved_node = self._maybe_resolve_interpolation(
+                parent=self,
+                key=key,
+                value=value,
+                throw_on_resolution_failure=True,
+            )
 
         return _get_value(resolved_node)
 
@@ -218,6 +220,12 @@ class BaseContainer(Container, ABC):
         from omegaconf import MISSING, DictConfig, ListConfig
 
         def convert(val: Node) -> Any:
+            from omegaconf.base import UnionNode
+
+            # UnionNode needs special handling: dereference to get actual value node
+            if isinstance(val, UnionNode):
+                val = val._dereference_node()
+
             value = val._value()
             if enum_to_str and isinstance(value, Enum):
                 value = f"{value.name}"
@@ -286,6 +294,15 @@ class BaseContainer(Container, ABC):
                 if enum_to_str and isinstance(key, Enum):
                     key = f"{key.name}"
                 retdict[key] = value
+
+            if (
+                is_union_annotation(conf._metadata.ref_type)
+                and is_structured_config(conf._metadata.object_type)
+                and "_type_" not in retdict
+            ):
+                t = conf._metadata.object_type
+                retdict["_type_"] = f"{t.__module__}.{t.__name__}"
+
             return retdict
         elif isinstance(conf, ListConfig):
             retlist: List[Any] = []
@@ -320,6 +337,65 @@ class BaseContainer(Container, ABC):
             return
 
         dest._validate_merge(value=src)
+
+        # Smart merge for Union types with explicit type info:
+        # We only apply this logic if the destination does NOT have an explicit field named `_type_`.
+        # If the user defined `_type_` as a field, we treat it as data, not metadata.
+        if (
+            is_union_annotation(dest._metadata.ref_type)
+            and not src._is_missing()
+            and "_type_" not in dest
+        ):
+            src_val = src._value()
+            if isinstance(src_val, dict) and "_type_" in src_val:
+                type_name = src_val["_type_"]
+                # Try to find matching candidate
+                candidates = dest._metadata.ref_type.__args__
+                for candidate in candidates:
+                    if candidate is Any or candidate is NoneType:
+                        continue
+                    origin = getattr(candidate, "__origin__", candidate)
+                    if not is_structured_config(origin):
+                        continue
+
+                    full_name = f"{origin.__module__}.{origin.__name__}"
+                    if full_name == type_name or origin.__name__ == type_name:
+                        # Found match. Switch type.
+                        # We need to ensure we don't merge the _type_ key itself into the object
+                        # as it is likely not a field of the dataclass.
+                        # However, src is a wrapper around the dict.
+                        # We should probably let strict merge handle the error if _type_ persists?
+                        # Or we should remove it?
+                        # _map_merge merges src INTO dest.
+                        # If src has _type_, and we merge it, dest will have _type_ (if allowed).
+                        # Structured configs usually don't allow unknown keys.
+                        # So we MUST remove `_type_` from the input if we consume it here.
+                        pass
+
+                        from omegaconf import OmegaConf
+
+                        # Check if current type is already correct?
+                        current_type = dest._metadata.object_type
+                        if current_type is not origin:
+                            new_node = OmegaConf.structured(origin)
+                            dest._set_value(new_node)
+
+                        # To remove _type_ from src during merge, we need to manipulate src.
+                        # src is a BaseContainer (DictConfig).
+                        # We can't easily modify src if it's referenced elsewhere.
+                        # But _map_merge takes `src`.
+                        # We can delete `_type_` from `src` if it's there.
+                        # But we should only delete it if we used it?
+                        # If we delete it from src, we modify the source object which is bad.
+                        # We should construct a new src without `_type_` if needed.
+                        # OR we rely on `_type_` being ignored? use `open_dict` context?
+                        # No, validation will fail.
+
+                        # Let's check `src` type. It is DictConfig.
+                        # We can create a shallow copy?
+                        # Or just ignore it during the iteration below?
+                        # The loop below iterates `src_items`. We can filter `_type_`.
+                        break
 
         def expand(node: Container) -> None:
             rt = node._metadata.ref_type
@@ -356,6 +432,16 @@ class BaseContainer(Container, ABC):
 
         src_items = list(src) if not src._is_missing() else []
         for key in src_items:
+            # We skip the specific key used for type identification during deserialization
+            # to prevent it from causing validation errors in structured configs.
+            # But only if it's NOT a valid field (i.e. if we are using it for Union switching).
+            if (
+                key == "_type_"
+                and is_union_annotation(dest._metadata.ref_type)
+                and "_type_" not in dest
+            ):
+                continue
+
             src_node = src._get_node(key, validate_access=False)
             dest_node = dest._get_node(key, validate_access=False)
             assert isinstance(src_node, Node)

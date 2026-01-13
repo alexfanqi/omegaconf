@@ -18,6 +18,7 @@ from typing import (
 
 from ._utils import (
     _DEFAULT_MARKER_,
+    NoneType,
     ValueKind,
     _get_value,
     _is_interpolation,
@@ -36,6 +37,7 @@ from ._utils import (
     is_primitive_dict,
     is_structured_config,
     is_structured_config_frozen,
+    is_union_annotation,
     type_str,
 )
 from .base import Box, Container, ContainerMetadata, DictKeyType, Node
@@ -90,7 +92,13 @@ class DictConfig(BaseContainer, MutableMapping[Any, Any]):
                 raise KeyValidationError(f"Unsupported key type {key_type}")
 
             if is_structured_config(content) or is_structured_config(ref_type):
-                self._set_value(content, flags=flags)
+                if is_structured_config(ref_type) and isinstance(content, dict):
+                    self._set_value(ref_type, flags=flags)
+                    for k, v in content.items():
+                        self.__setitem__(k, v)
+                else:
+                    self._set_value(content, flags=flags)
+
                 if is_structured_config_frozen(content) or is_structured_config_frozen(
                     ref_type
                 ):
@@ -191,7 +199,9 @@ class DictConfig(BaseContainer, MutableMapping[Any, Any]):
         target_type = target._metadata.ref_type
         value_type = OmegaConf.get_type(value)
 
-        if is_dict(value_type) and is_dict(target_type):
+        if is_dict(value_type) and (
+            is_dict(target_type) or is_structured_config(target_type)
+        ):
             return
         if is_container_annotation(target_type) and not is_container_annotation(
             value_type
@@ -201,9 +211,38 @@ class DictConfig(BaseContainer, MutableMapping[Any, Any]):
             )
 
         if target_type is not None and value_type is not None:
-            origin = getattr(target_type, "__origin__", target_type)
-            if not issubclass(value_type, origin):
-                self._raise_invalid_value(value, value_type, target_type)
+            if is_union_annotation(target_type):
+                valid = False
+                for arg in target_type.__args__:
+                    if arg is Any:
+                        valid = True
+                        break
+                    origin = getattr(arg, "__origin__", arg)
+                    try:
+                        if issubclass(value_type, origin):
+                            valid = True
+                            break
+                    except TypeError:
+                        pass
+
+                    # Check if value is a valid selection string
+                    if value_type is str:
+                        try:
+                            if issubclass(origin, type) or is_structured_config(origin):
+                                if (
+                                    origin.__name__ == value
+                                    or f"{origin.__module__}.{origin.__name__}" == value
+                                ):
+                                    valid = True
+                                    break
+                        except Exception:
+                            pass
+                if not valid:
+                    self._raise_invalid_value(value, value_type, target_type)
+            else:
+                origin = getattr(target_type, "__origin__", target_type)
+                if not issubclass(value_type, origin):
+                    self._raise_invalid_value(value, value_type, target_type)
 
     def _validate_merge(self, value: Any) -> None:
         from omegaconf import OmegaConf
@@ -230,12 +269,19 @@ class DictConfig(BaseContainer, MutableMapping[Any, Any]):
             and not is_dict(src_obj_type)
             and not issubclass(src_obj_type, dest_obj_type)
         )
+
         if validation_error:
-            msg = (
-                f"Merge error: {type_str(src_obj_type)} is not a "
-                f"subclass of {type_str(dest_obj_type)}. value: {src}"
-            )
-            raise ValidationError(msg)
+            # If the destination is a union, we might be switching to a different type.
+            # In this case, we delegate the validation to _validate_set which will allow valid types
+            # (including strings used for selection).
+            if is_union_annotation(self._metadata.ref_type):
+                pass
+            else:
+                msg = (
+                    f"Merge error: {type_str(src_obj_type)} is not a "
+                    f"subclass of {type_str(dest_obj_type)}. value: {src}"
+                )
+                raise ValidationError(msg)
 
     def _validate_non_optional(self, key: Optional[DictKeyType], value: Any) -> None:
         if _is_none(value, resolve=True, throw_on_resolution_failure=False):
@@ -652,6 +698,9 @@ class DictConfig(BaseContainer, MutableMapping[Any, Any]):
         if flags is None:
             flags = {}
 
+        if isinstance(value, ValueNode):
+            value = value._value()
+
         assert not isinstance(value, ValueNode)
         self._validate_set(key=None, value=value)
 
@@ -683,10 +732,64 @@ class DictConfig(BaseContainer, MutableMapping[Any, Any]):
                 self._metadata.object_type = value._metadata.object_type
 
             elif isinstance(value, dict):
+                if is_structured_config(self._metadata.ref_type):
+                    raise ValidationError(
+                        f"Value '{value}' of type '{type_str(type(value))}' "
+                        f"is incompatible with type hint '{type_str(self._metadata.ref_type)}'"
+                    )
                 with flag_override(self, ["struct", "readonly"], False):
                     for k, v in value.items():
                         self.__setitem__(k, v)
                 self._metadata.object_type = dict
+
+            elif isinstance(value, str) and is_union_annotation(
+                self._metadata.ref_type
+            ):
+                # Handle selection logic
+                candidates = self._metadata.ref_type.__args__
+
+                # If str is a valid type in the Union, we bail out of the selection logic.
+                # If the user provides a string, it should be treated as a value, not a selection.
+                allow_str = False
+                for candidate in candidates:
+                    if candidate is str:
+                        allow_str = True
+                        break
+
+                    origin = getattr(candidate, "__origin__", candidate)
+                    try:
+                        if isinstance(origin, type) and issubclass(origin, str):
+                            allow_str = True
+                            break
+                    except TypeError:
+                        pass
+
+                matched = False
+                if not allow_str:
+                    for candidate in candidates:
+                        if candidate is Any or candidate is NoneType:
+                            continue
+
+                        origin = getattr(candidate, "__origin__", candidate)
+                        if not is_structured_config(origin):
+                            continue
+
+                        if (
+                            origin.__name__ == value
+                            or f"{origin.__module__}.{origin.__name__}" == value
+                        ):
+                            # Instantiate the candidate with default values
+                            # We use OmegaConf.structured to create a DictConfig from the class
+                            from omegaconf import OmegaConf
+
+                            new_node = OmegaConf.structured(origin)
+                            self._set_value_impl(new_node, flags)
+                            matched = True
+                            break
+
+                if not matched:
+                    msg = f"Unsupported value type: {value}"
+                    raise ValidationError(msg)
 
             else:  # pragma: no cover
                 msg = f"Unsupported value type: {value}"
