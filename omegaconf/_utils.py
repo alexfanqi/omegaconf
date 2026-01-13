@@ -705,7 +705,7 @@ def is_dict_annotation(type_: Any) -> bool:
     origin = getattr(type_, "__origin__", None)
     # type_dict is a bit hard to detect.
     # this support is tentative, if it eventually causes issues in other areas it may be dropped.
-    typed_dict = hasattr(type_, "__base__") and type_.__base__ == dict
+    typed_dict = hasattr(type_, "__base__") and type_.__base__ is dict
     return origin is dict or typed_dict
 
 
@@ -724,11 +724,29 @@ def is_tuple_annotation(type_: Any) -> bool:
 
 
 def is_supported_union_annotation(obj: Any) -> bool:
-    """Currently only primitive types are supported in Unions, e.g. Union[int, str]"""
+    """Currently only primitive types and structured configs are supported in Unions."""
     if not is_union_annotation(obj):
         return False
     args = obj.__args__
-    return all(is_primitive_type_annotation(arg) for arg in args)
+    return all(
+        is_primitive_type_annotation(arg) or is_structured_config(arg) or arg is Any
+        for arg in args
+    )
+
+
+def get_union_candidates(type_: Any) -> Dict[str, Any]:
+    if not is_union_annotation(type_):
+        return {}
+    res = {}
+    for arg in type_.__args__:
+        if arg is NoneType:
+            continue
+        if is_structured_config(arg):
+            name = get_type_of(arg).__name__
+        else:
+            name = type_str(arg)
+        res[name] = arg
+    return res
 
 
 def is_dict_subclass(type_: Any) -> bool:
@@ -939,9 +957,9 @@ def format_and_raise(
         REF_TYPE=ref_type_str, OBJECT_TYPE=object_type_str, MSG=msg, FULL_KEY=full_key
     )
     exception_type = type(cause) if type_override is None else type_override
-    if exception_type == TypeError:
+    if exception_type is TypeError:
         exception_type = ConfigTypeError
-    elif exception_type == IndexError:
+    elif exception_type is IndexError:
         exception_type = ConfigIndexError
 
     ex = exception_type(f"{message}")

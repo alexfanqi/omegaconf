@@ -15,6 +15,7 @@ from ._utils import (
     _is_missing_value,
     _is_special,
     format_and_raise,
+    get_union_candidates,
     get_value_kind,
     is_union_annotation,
     is_valid_value_annotation,
@@ -830,6 +831,7 @@ class UnionNode(Box):
                     flags={"convert": False},
                 ),
             )
+            self.__dict__["_candidates"] = get_union_candidates(ref_type)
             self._set_value(content)
         except Exception as ex:
             format_and_raise(node=None, key=key, value=content, msg=str(ex), cause=ex)
@@ -896,27 +898,111 @@ class UnionNode(Box):
                         f"Value '$VALUE' is incompatible with type hint '{type_str(type_hint)}'"
                     )
             self.__dict__["_content"] = value
-        elif isinstance(value, Container):
-            raise ValidationError(
-                f"Cannot assign container '$VALUE' of type '$VALUE_TYPE' to {type_str(type_hint)}"
-            )
-        else:
-            for candidate_ref_type in ref_type.__args__:
-                try:
-                    self.__dict__["_content"] = _node_wrap(
-                        value=value,
-                        ref_type=candidate_ref_type,
-                        is_optional=False,
-                        key=None,
-                        parent=self,
-                    )
-                    break
-                except ValidationError:
-                    continue
-            else:
-                raise ValidationError(
-                    f"Value '$VALUE' of type '$VALUE_TYPE' is incompatible with type hint '{type_str(type_hint)}'"
+            return
+
+        if isinstance(value, Container):
+            content = self.__dict__["_content"]
+            if isinstance(content, Container):
+                content._set_value(value, flags=flags)
+                return
+
+        # Explicit selection via string
+        if isinstance(value, str):
+            candidates = self.__dict__["_candidates"]
+            if value in candidates:
+                candidate_ref_type = candidates[value]
+                self.__dict__["_content"] = _node_wrap(
+                    value=candidate_ref_type,
+                    ref_type=candidate_ref_type,
+                    is_optional=False,
+                    key=None,
+                    parent=self,
                 )
+                return
+
+        for candidate_ref_type in ref_type.__args__:
+            try:
+                self.__dict__["_content"] = _node_wrap(
+                    value=value,
+                    ref_type=candidate_ref_type,
+                    is_optional=False,
+                    key=None,
+                    parent=self,
+                )
+                break
+            except ValidationError:
+                continue
+        else:
+            raise ValidationError(
+                f"Value '$VALUE' of type '$VALUE_TYPE' is incompatible with type hint '{type_str(type_hint)}'"
+            )
+
+    def _dereference_node_impl(
+        self,
+        throw_on_resolution_failure: bool,
+        memo: Optional[Set[int]] = None,
+    ) -> Optional["Node"]:
+        content = self.__dict__["_content"]
+        if isinstance(content, Node):
+            return content._dereference_node_impl(
+                throw_on_resolution_failure=throw_on_resolution_failure,
+                memo=memo,
+            )
+
+        if not _is_special(content) or not _is_interpolation(content):
+            return self
+
+        res = super()._dereference_node_impl(
+            throw_on_resolution_failure=throw_on_resolution_failure,
+            memo=memo,
+        )
+
+        if res is self:
+            return self
+
+        # If res is not self, it means it was an interpolation.
+        # Check if the result of interpolation is a string that matches a candidate.
+        from omegaconf.omegaconf import _node_wrap
+
+        val = _get_value(res)
+        if isinstance(val, str):
+            candidates = self.__dict__["_candidates"]
+            if val in candidates:
+                candidate_ref_type = candidates[val]
+                # Return a temporary node for this access.
+                return _node_wrap(
+                    value=candidate_ref_type,
+                    ref_type=candidate_ref_type,
+                    is_optional=False,
+                    key=self._metadata.key,
+                    parent=self._get_parent(),
+                )
+        return res
+
+    def __getattr__(self, name: str) -> Any:
+        if name in self.__dict__:
+            return self.__dict__[name]
+
+        resolved = self._maybe_dereference_node()
+        if resolved is self:
+            content = self.__dict__["_content"]
+            if isinstance(content, Node):
+                return getattr(content, name)
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            )
+
+        return getattr(resolved, name)
+
+    def __getitem__(self, key: Any) -> Any:
+        resolved = self._maybe_dereference_node()
+        if resolved is self:
+            content = self.__dict__["_content"]
+            if isinstance(content, Node):
+                return content[key]
+            raise TypeError(f"'{type(self).__name__}' object is not subscriptable")
+
+        return resolved[key]
 
     def _is_optional(self) -> bool:
         return self.__dict__["_metadata"].optional is True

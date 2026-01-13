@@ -47,7 +47,11 @@ class ValueNode(Node):
 
     def _strict_validate_type(self, value: Any) -> None:
         ref_type = self._metadata.ref_type
-        if isinstance(ref_type, type) and type(value) is not ref_type:
+        if (
+            isinstance(ref_type, type)
+            and ref_type is not Any
+            and type(value) is not ref_type
+        ):
             type_hint = type_str(self._metadata.type_hint)
             raise ValidationError(
                 f"Value '$VALUE' of type '$VALUE_TYPE' is incompatible with type hint '{type_hint}'"
