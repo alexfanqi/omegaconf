@@ -8,7 +8,17 @@ import types
 import warnings
 from enum import Enum
 from textwrap import dedent
-from typing import Any, Dict, List, Optional, Tuple, Type, Union, get_type_hints
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    Union,
+    get_type_hints,
+)
 
 import yaml
 
@@ -267,6 +277,17 @@ def is_union_annotation(type_: Any) -> bool:
     return getattr(type_, "__origin__", None) is Union
 
 
+def is_literal_annotation(type_: Any) -> bool:
+    try:
+        from typing import Literal
+    except ImportError:
+        try:
+            from typing_extensions import Literal
+        except ImportError:
+            return False
+    return getattr(type_, "__origin__", None) is Literal
+
+
 def _resolve_optional(type_: Any) -> Tuple[bool, Any]:
     """Check whether `type_` is equivalent to `typing.Optional[T]` for some T."""
     if is_union_annotation(type_):
@@ -322,6 +343,11 @@ def _resolve_forward(type_: Type[Any], module: str) -> Type[Any]:
             if et is not None:
                 et = _resolve_forward(et, module=module)
             return List[et]  # type: ignore
+        if is_sequence_annotation(type_):
+            et = get_list_element_type(type_)
+            if et is not None:
+                et = _resolve_forward(et, module=module)
+            return Sequence[et]  # type: ignore
         if is_tuple_annotation(type_):
             its = get_tuple_item_types(type_)
             its = tuple(_resolve_forward(it, module=module) for it in its)
@@ -723,6 +749,15 @@ def is_tuple_annotation(type_: Any) -> bool:
     return origin is tuple
 
 
+def is_sequence_annotation(type_: Any) -> bool:
+    import collections.abc
+
+    if type_ in (Sequence, collections.abc.Sequence):
+        return True
+    origin = getattr(type_, "__origin__", None)
+    return origin in (Sequence, collections.abc.Sequence)
+
+
 def is_supported_union_annotation(obj: Any) -> bool:
     """Currently only primitive types and structured configs are supported in Unions."""
     if not is_union_annotation(obj):
@@ -1058,7 +1093,9 @@ def is_generic_list(type_: Any) -> bool:
     :param type_: variable type
     :return: bool
     """
-    return is_list_annotation(type_) and get_list_element_type(type_) is not None
+    return (
+        is_list_annotation(type_) or is_sequence_annotation(type_)
+    ) and get_list_element_type(type_) is not None
 
 
 def is_generic_dict(type_: Any) -> bool:
@@ -1075,7 +1112,11 @@ def is_generic_dict(type_: Any) -> bool:
 
 
 def is_container_annotation(type_: Any) -> bool:
-    return is_list_annotation(type_) or is_dict_annotation(type_)
+    return (
+        is_list_annotation(type_)
+        or is_dict_annotation(type_)
+        or is_sequence_annotation(type_)
+    )
 
 
 def split_key(key: str) -> List[str]:

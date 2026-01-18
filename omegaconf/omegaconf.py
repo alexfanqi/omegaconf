@@ -44,9 +44,11 @@ from ._utils import (
     is_dict_annotation,
     is_int,
     is_list_annotation,
+    is_literal_annotation,
     is_primitive_container,
     is_primitive_dict,
     is_primitive_list,
+    is_sequence_annotation,
     is_structured_config,
     is_tuple_annotation,
     is_union_annotation,
@@ -68,6 +70,7 @@ from .nodes import (
     EnumNode,
     FloatNode,
     IntegerNode,
+    LiteralNode,
     PathNode,
     StringNode,
     ValueNode,
@@ -1023,9 +1026,11 @@ def _node_wrap(
             key_type=key_type,
             element_type=element_type,
         )
-    elif (is_list_annotation(ref_type) or is_tuple_annotation(ref_type)) or (
-        type(value) in (list, tuple) and ref_type is Any
-    ):
+    elif (
+        is_list_annotation(ref_type)
+        or is_tuple_annotation(ref_type)
+        or is_sequence_annotation(ref_type)
+    ) or (type(value) in (list, tuple) and ref_type is Any):
         element_type = get_list_element_type(ref_type)
         node = ListConfig(
             content=value,
@@ -1053,6 +1058,14 @@ def _node_wrap(
             is_optional=is_optional,
             key=key,
             parent=parent,
+        )
+    elif is_literal_annotation(ref_type):
+        node = LiteralNode(
+            value=value,
+            key=key,
+            parent=parent,
+            is_optional=is_optional,
+            ref_type=ref_type,
         )
     elif ref_type == Any or ref_type is None:
         node = AnyNode(value=value, key=key, parent=parent)

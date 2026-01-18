@@ -11,6 +11,7 @@ from omegaconf._utils import (
     _is_interpolation,
     get_type_of,
     get_value_kind,
+    is_literal_annotation,
     is_primitive_container,
     type_str,
 )
@@ -503,6 +504,45 @@ class EnumNode(ValueNode):  # lgtm [py/missing-equals] : Intentional.
 
     def __deepcopy__(self, memo: Dict[int, Any]) -> "EnumNode":
         res = EnumNode(enum_type=self.enum_type)
+        self._deepcopy_impl(res, memo)
+        return res
+
+
+class LiteralNode(ValueNode):
+    def __init__(
+        self,
+        value: Any = None,
+        key: Any = None,
+        parent: Optional[Box] = None,
+        is_optional: bool = True,
+        flags: Optional[Dict[str, bool]] = None,
+        ref_type: Any = Any,
+    ):
+        super().__init__(
+            parent=parent,
+            value=value,
+            metadata=Metadata(
+                key=key,
+                optional=is_optional,
+                ref_type=ref_type,
+                object_type=ref_type,
+                flags=flags,
+            ),
+        )
+
+    def _validate_and_convert_impl(self, value: Any) -> Any:
+        if not is_literal_annotation(self._metadata.ref_type):
+            raise ValidationError("LiteralNode ref_type must be a Literal")
+
+        literals = self._metadata.ref_type.__args__
+        if value not in literals:
+            raise ValidationError(
+                f"Value '{value}' is not in the allowed literals: {literals}"
+            )
+        return value
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "LiteralNode":
+        res = LiteralNode(ref_type=self._metadata.ref_type)
         self._deepcopy_impl(res, memo)
         return res
 

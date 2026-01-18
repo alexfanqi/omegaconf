@@ -26,6 +26,7 @@ from ._utils import (
     is_list_annotation,
     is_primitive_dict,
     is_primitive_type_annotation,
+    is_sequence_annotation,
     is_structured_config,
     is_tuple_annotation,
     is_union_annotation,
@@ -130,7 +131,7 @@ class BaseContainer(Container, ABC):
         if is_container_annotation(ref_type):
             if is_dict_annotation(ref_type):
                 dict_copy["_metadata"].ref_type = Dict
-            elif is_list_annotation(ref_type):
+            elif is_list_annotation(ref_type) or is_sequence_annotation(ref_type):
                 dict_copy["_metadata"].ref_type = List
             else:
                 assert False
@@ -403,7 +404,11 @@ class BaseContainer(Container, ABC):
             if rt is not Any:
                 if is_dict_annotation(rt):
                     val = {}
-                elif is_list_annotation(rt) or is_tuple_annotation(rt):
+                elif (
+                    is_list_annotation(rt)
+                    or is_tuple_annotation(rt)
+                    or is_sequence_annotation(rt)
+                ):
                     val = []
                 else:
                     val = rt
