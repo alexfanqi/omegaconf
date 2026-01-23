@@ -416,6 +416,49 @@ must precisely match one of the types in the ``Union`` annotation:
         full_key: u
         object_type=StrOrInt
 
+Structured config unions
++++++++++++++++++++++++
+
+``Union`` types can also be used with structured configs and inside containers (such as ``typing.List`` or
+``typing.Dict``). When a field is annotated with a union of multiple structured config classes, OmegaConf
+will attempt to match the assigned data to one of the classes in the union.
+
+By default, OmegaConf uses duck-typing to select a matching class. However, if union members have
+overlapping fields, duck-typing may be ambiguous. To ensure the correct type is preserved during
+serialization and round-tripping, OmegaConf uses a special ``_type_`` field. This field is automatically
+added to exported dictionaries when a structured config is stored in a union-typed field (including
+union-typed container elements), and it is consumed during merge to select the correct candidate.
+
+.. doctest::
+
+    >>> from typing import List, Union
+    >>>
+    >>> @dataclass
+    ... class UserA:
+    ...     name: str = "User A"
+    ...     level: int = 1
+    ...
+    >>> @dataclass
+    ... class UserB:
+    ...     name: str = "User B"
+    ...     rank: int = 10
+    ...
+    >>> @dataclass
+    ... class Group:
+    ...     members: List[Union[UserA, UserB]] = field(default_factory=list)
+    ...
+    >>> cfg = OmegaConf.structured(Group)
+    >>> cfg.members.append(UserB(name="Joe", rank=5))
+    >>> data = OmegaConf.to_container(cfg, resolve=False)
+    >>> assert data["members"][0]["_type_"].endswith(".UserB")
+    >>> cfg2 = OmegaConf.structured(Group)
+    >>> cfg2.merge_with(data)
+    >>> assert OmegaConf.get_type(cfg2.members[0]) is UserB
+
+If a structured config class explicitly defines a field named ``_type_``, OmegaConf treats it as a regular
+data field and will not use it as a discriminator for union type selection. This ensures user data is never
+overwritten by OmegaConf metadata.
+
 
 .. _other_special_features:
 

@@ -714,6 +714,15 @@ class BaseContainer(Container, ABC):
                 )
             )
             if should_set_value:
+                # For Union-typed structured values, setting a plain dict/string should go
+                # through the Union selection path (and support `_type_` as discriminator)
+                # instead of calling `DictConfig._set_value()` directly.
+                if is_union_annotation(target_ref_type) and not special_value:
+                    from omegaconf.dictconfig import DictConfig
+
+                    if isinstance(target_node_ref, DictConfig):
+                        self._wrap_value_and_set(key, value, target_type_hint)
+                        return
                 if special_value and isinstance(value, Node):
                     value = value._value()
                 self.__dict__["_content"][key]._set_value(value)
@@ -738,6 +747,112 @@ class BaseContainer(Container, ABC):
         from omegaconf.omegaconf import _maybe_wrap
 
         is_optional, ref_type = _resolve_optional(type_hint)
+
+        # Special handling for Union-typed container elements where the Union contains
+        # structured configs.
+        #
+        # Two cases are problematic without this:
+        # 1) During merge, `val` often arrives as a Node from a temporary config.
+        #    `_maybe_wrap()` would return it as-is, bypassing Union selection.
+        # 2) For plain dict/string inputs, storing a UnionNode inside a ListConfig/DictConfig
+        #    breaks explicit-type round-tripping because `_to_content()` walks via `_get_child()`
+        #    and therefore does not "see" the Union wrapper.
+        #
+        # We use UnionNode as a helper to perform selection, then store the selected
+        # concrete node while preserving `ref_type` as the Union so serialization can
+        # inject `_type_` per element.
+        if is_union_annotation(ref_type):
+            has_structured_candidate = False
+            for arg in ref_type.__args__:
+                if arg is Any or arg is NoneType:
+                    continue
+                origin = getattr(arg, "__origin__", arg)
+                if is_structured_config(origin):
+                    has_structured_candidate = True
+                    break
+
+            if has_structured_candidate:
+                from omegaconf import OmegaConf
+                from omegaconf.base import UnionNode
+
+                if isinstance(val, Node):
+                    if _is_special(val):
+                        raw: Any = _get_value(val)
+                    else:
+                        raw = OmegaConf.to_container(val, resolve=False)
+                else:
+                    raw = _get_value(val)
+
+                # `raw` can be a dict/list of Node objects (e.g. coming from `subnode._value()`
+                # during deep type-hint updates). Convert those into plain containers so Union
+                # selection can inspect `_type_` reliably.
+                if isinstance(raw, dict):
+                    converted: Dict[Any, Any] = {}
+                    for k, v in raw.items():
+                        if isinstance(v, Node):
+                            if isinstance(v, Container):
+                                converted[k] = OmegaConf.to_container(v, resolve=False)
+                            else:
+                                converted[k] = v._value()
+                        else:
+                            converted[k] = v
+                    raw = converted
+                elif isinstance(raw, list):
+                    converted_list: List[Any] = []
+                    for v in raw:
+                        if isinstance(v, Node):
+                            if isinstance(v, Container):
+                                converted_list.append(
+                                    OmegaConf.to_container(v, resolve=False)
+                                )
+                            else:
+                                converted_list.append(v._value())
+                        else:
+                            converted_list.append(v)
+                    raw = converted_list
+
+                # If this assignment targets an existing structured node that has a real
+                # `_type_` field, then `_type_` must be treated as data, not as a Union
+                # discriminator (see `tests/test_union_explicit_type.py::test_union_explicit_type_conflict`).
+                if isinstance(raw, dict) and "_type_" in raw:
+                    try:
+                        existing = self._get_node(key, validate_access=False)
+                    except Exception:
+                        existing = None
+                    from omegaconf.dictconfig import DictConfig
+
+                    if (
+                        isinstance(existing, DictConfig)
+                        and is_structured_config(existing._metadata.object_type)
+                        and "_type_" in existing
+                    ):
+                        merged = OmegaConf.merge(existing, raw)
+                        assert isinstance(merged, Node)
+                        merged._set_parent(self)
+                        merged._set_key(key)
+                        merged._metadata.ref_type = ref_type
+                        merged._metadata.optional = is_optional
+                        self.__dict__["_content"][key] = merged
+                        return
+
+                selected = UnionNode(
+                    content=raw,
+                    ref_type=ref_type,
+                    is_optional=is_optional,
+                    key=key,
+                    parent=self,
+                )._value()
+
+                if isinstance(selected, Node):
+                    selected._set_parent(self)
+                    selected._set_key(key)
+                    selected._metadata.ref_type = ref_type
+                    selected._metadata.optional = is_optional
+                    self.__dict__["_content"][key] = selected
+                    return
+                else:
+                    # None / MISSING / interpolation
+                    val = selected
 
         try:
             wrapped = _maybe_wrap(
@@ -977,6 +1092,21 @@ def _deep_update_subnode(node: BaseContainer, key: Any, value_type_hint: Any) ->
         node._wrap_value_and_set(key, subnode._value(), value_type_hint)
         subnode = node._get_node(key)
         assert isinstance(subnode, Node)
+    else:
+        # If a union type hint is applied to an existing untyped DictConfig, we need
+        # to perform Union selection to convert it into the correct structured config.
+        # This can happen when deep-updating type hints on containers during merge.
+        from omegaconf.dictconfig import DictConfig
+
+        _, value_ref_type = _resolve_optional(value_type_hint)
+        if (
+            is_union_annotation(value_ref_type)
+            and isinstance(subnode, DictConfig)
+            and subnode._metadata.object_type in (dict, None)
+        ):
+            node._wrap_value_and_set(key, subnode._value(), value_type_hint)
+            subnode = node._get_node(key)
+            assert isinstance(subnode, Node)
     _deep_update_type_hint(subnode, value_type_hint)
 
 
@@ -1011,6 +1141,10 @@ def _shallow_validate_type_hint(node: Node, type_hint: Any) -> None:
         elif is_dict_annotation(ref_type) and isinstance(node, DictConfig):
             return
         elif is_list_annotation(ref_type) and isinstance(node, ListConfig):
+            return
+        elif is_union_annotation(ref_type) and isinstance(node, DictConfig):
+            # Structured unions are represented as DictConfig nodes whose metadata.ref_type
+            # is the Union and whose object_type is the selected structured config.
             return
         else:
             if isinstance(node, ValueNode):

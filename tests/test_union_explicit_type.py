@@ -1,7 +1,174 @@
 from dataclasses import dataclass, field
-from typing import Union
+from typing import Dict, List, Optional, Union
 
 from omegaconf import MISSING, DictConfig, OmegaConf
+
+
+@dataclass
+class _AmbigA:
+    # Intentionally overlaps with _AmbigB to make duck-typing ambiguous.
+    # Only explicit `_type_` should disambiguate.
+    val: int = 0
+    kind: str = "A"
+
+
+@dataclass
+class _AmbigB:
+    val: int = 0
+    kind: str = "B"
+
+
+@dataclass
+class _ListOfUnionCfg:
+    lst: List[Union[_AmbigA, _AmbigB]] = field(default_factory=list)
+
+
+@dataclass
+class _DictOfUnionCfg:
+    mp: Dict[str, Union[_AmbigA, _AmbigB]] = field(default_factory=dict)
+
+
+@dataclass
+class _OptionalListOfUnionCfg:
+    lst: List[Optional[Union[_AmbigA, _AmbigB]]] = field(default_factory=list)
+
+
+@dataclass
+class _NestedContainerUnionCfg:
+    lst: List[Dict[str, Union[_AmbigA, _AmbigB]]] = field(default_factory=list)
+
+
+def test_union_explicit_type_in_list_roundtrip():
+    cfg = OmegaConf.structured(_ListOfUnionCfg)
+
+    full_name_b = f"{_AmbigB.__module__}.{_AmbigB.__qualname__}"
+    cfg.merge_with({"lst": [{"_type_": full_name_b, "val": 123}]})
+
+    # Ensure per-element `_type_` is emitted.
+    dump = OmegaConf.to_yaml(cfg)
+    assert "_type_" in dump
+    assert "_AmbigB" in dump
+
+    # Round-trip via YAML.
+    loaded = OmegaConf.create(dump)
+    cfg2 = OmegaConf.structured(_ListOfUnionCfg)
+    cfg2.merge_with(loaded)
+
+    assert isinstance(cfg2.lst[0], DictConfig)
+    assert OmegaConf.get_type(cfg2.lst[0]) is _AmbigB
+    assert cfg2.lst[0].kind == "B"
+    assert cfg2.lst[0].val == 123
+    assert "_type_" not in cfg2.lst[0]
+
+
+def test_union_explicit_type_in_dict_roundtrip():
+    cfg = OmegaConf.structured(_DictOfUnionCfg)
+
+    full_name_b = f"{_AmbigB.__module__}.{_AmbigB.__qualname__}"
+    cfg.merge_with({"mp": {"k": {"_type_": full_name_b, "val": 123}}})
+
+    dump = OmegaConf.to_yaml(cfg)
+    assert "_type_" in dump
+    assert "_AmbigB" in dump
+
+    loaded = OmegaConf.create(dump)
+    cfg2 = OmegaConf.structured(_DictOfUnionCfg)
+    cfg2.merge_with(loaded)
+
+    assert isinstance(cfg2.mp["k"], DictConfig)
+    assert OmegaConf.get_type(cfg2.mp["k"]) is _AmbigB
+    assert cfg2.mp["k"].kind == "B"
+    assert cfg2.mp["k"].val == 123
+    assert "_type_" not in cfg2.mp["k"]
+
+
+def test_union_in_container_append_dict_and_selection_string_roundtrip() -> None:
+    # Append dict with explicit _type_
+    cfg = OmegaConf.structured(_ListOfUnionCfg)
+    full_name_b = f"{_AmbigB.__module__}.{_AmbigB.__qualname__}"
+    cfg.lst.append({"_type_": full_name_b, "val": 7})
+    assert OmegaConf.get_type(cfg.lst[0]) is _AmbigB
+
+    d = OmegaConf.to_container(cfg, resolve=False)
+    assert isinstance(d, dict)
+    assert d["lst"][0]["_type_"].endswith("._AmbigB")
+
+    cfg2 = OmegaConf.structured(_ListOfUnionCfg)
+    cfg2.merge_with(d)
+    assert OmegaConf.get_type(cfg2.lst[0]) is _AmbigB
+    assert cfg2.lst[0].val == 7
+
+    # Append selection string (only safe because str is not a Union member here)
+    cfg3 = OmegaConf.structured(_ListOfUnionCfg)
+    cfg3.lst.append("_AmbigB")
+    cfg3.lst[0].val = 11
+    assert OmegaConf.get_type(cfg3.lst[0]) is _AmbigB
+    cfg4 = OmegaConf.structured(_ListOfUnionCfg)
+    cfg4.merge_with(OmegaConf.create(OmegaConf.to_yaml(cfg3)))
+    assert OmegaConf.get_type(cfg4.lst[0]) is _AmbigB
+    assert cfg4.lst[0].val == 11
+
+
+def test_union_in_container_without_type_is_ambiguous() -> None:
+    cfg = OmegaConf.structured(_ListOfUnionCfg)
+    # Both candidates accept {"val": ...} so duck-typing should pick the first.
+    cfg.merge_with({"lst": [{"val": 1}]})
+    assert OmegaConf.get_type(cfg.lst[0]) is _AmbigA
+
+
+def test_optional_union_in_container_roundtrip() -> None:
+    cfg = OmegaConf.structured(_OptionalListOfUnionCfg)
+    full_name_b = f"{_AmbigB.__module__}.{_AmbigB.__qualname__}"
+    cfg.merge_with({"lst": [None, {"_type_": full_name_b, "val": 3}]})
+    assert cfg.lst[0] is None
+    assert OmegaConf.get_type(cfg.lst[1]) is _AmbigB
+
+    cfg2 = OmegaConf.structured(_OptionalListOfUnionCfg)
+    cfg2.merge_with(OmegaConf.create(OmegaConf.to_yaml(cfg)))
+    assert cfg2.lst[0] is None
+    assert OmegaConf.get_type(cfg2.lst[1]) is _AmbigB
+    assert cfg2.lst[1].val == 3
+
+
+def test_nested_container_with_union_values_roundtrip() -> None:
+    cfg = OmegaConf.structured(_NestedContainerUnionCfg)
+    full_name_b = f"{_AmbigB.__module__}.{_AmbigB.__qualname__}"
+    cfg.merge_with({"lst": [{"k": {"_type_": full_name_b, "val": 9}}]})
+    assert OmegaConf.get_type(cfg.lst[0]["k"]) is _AmbigB
+
+    cfg2 = OmegaConf.structured(_NestedContainerUnionCfg)
+    cfg2.merge_with(OmegaConf.create(OmegaConf.to_yaml(cfg)))
+    assert OmegaConf.get_type(cfg2.lst[0]["k"]) is _AmbigB
+    assert cfg2.lst[0]["k"].val == 9
+
+
+def test_union_in_container_type_field_conflict_is_data() -> None:
+    @dataclass
+    class TypeHaver:
+        _type_: str = "original"
+        data: int = 0
+
+    @dataclass
+    class Other:
+        data: int = 1
+
+    @dataclass
+    class Cfg:
+        lst: List[Union[TypeHaver, Other]] = field(
+            default_factory=lambda: [TypeHaver()]
+        )
+
+    cfg = OmegaConf.structured(Cfg)
+
+    # Assign dict containing `_type_` should update field, not switch union member.
+    cfg.lst[0] = {"_type_": "Other", "data": 5}
+    assert OmegaConf.get_type(cfg.lst[0]) is TypeHaver
+    assert cfg.lst[0]._type_ == "Other"
+    assert cfg.lst[0].data == 5
+
+    # Serializer must not overwrite the user-controlled `_type_` field.
+    dump = OmegaConf.to_yaml(cfg)
+    assert "_type_: Other" in dump
 
 
 def test_union_explicit_type_serialization():
