@@ -1457,6 +1457,31 @@ def _node_wrap(
     ref_type: Any = Any,
 ) -> Node:
     node: Node
+    # Support Union elements that use container node classes (DictConfig/ListConfig)
+    # as type hints.
+    if isinstance(ref_type, type):
+        from .dictconfig import DictConfig as _DictConfig
+        from .listconfig import ListConfig as _ListConfig
+
+        if ref_type is _DictConfig:
+            if not isinstance(value, _DictConfig):
+                raise ValidationError(
+                    f"Value '$VALUE' of type '$VALUE_TYPE' is incompatible with type hint '{type_str(_DictConfig)}'"
+                )
+            value._set_parent(parent)
+            value._set_key(key)
+            value._metadata.optional = is_optional
+            return value
+        if ref_type is _ListConfig:
+            if not isinstance(value, _ListConfig):
+                raise ValidationError(
+                    f"Value '$VALUE' of type '$VALUE_TYPE' is incompatible with type hint '{type_str(_ListConfig)}'"
+                )
+            value._set_parent(parent)
+            value._set_key(key)
+            value._metadata.optional = is_optional
+            return value
+
     if is_dict_annotation(ref_type) or (is_primitive_dict(value) and ref_type is Any):
         key_type, element_type = get_dict_key_value_types(ref_type)
         node = DictConfig(
@@ -1482,6 +1507,14 @@ def _node_wrap(
             element_type=element_type,
             ref_type=ref_type,
         )
+    elif is_union_annotation(ref_type):
+        node = UnionNode(
+            content=value,
+            ref_type=ref_type,
+            is_optional=is_optional,
+            key=key,
+            parent=parent,
+        )
     elif is_structured_config(ref_type) or is_structured_config(value):
         key_type, element_type = get_dict_key_value_types(value)
         node = DictConfig(
@@ -1492,14 +1525,6 @@ def _node_wrap(
             parent=parent,
             key_type=key_type,
             element_type=element_type,
-        )
-    elif is_union_annotation(ref_type):
-        node = UnionNode(
-            content=value,
-            ref_type=ref_type,
-            is_optional=is_optional,
-            key=key,
-            parent=parent,
         )
     elif is_literal_annotation(ref_type):
         node = LiteralNode(
@@ -1566,6 +1591,17 @@ def _maybe_wrap(
     # if already a node, update key and parent and return as is.
     # NOTE: that this mutate the input node!
     if isinstance(value, Node):
+        # For Union-typed fields, keep the UnionNode wrapper even when assigning
+        # an existing node instance (e.g. DictConfig/ListConfig as a Union member).
+        if is_union_annotation(ref_type) and not isinstance(value, UnionNode):
+            return _node_wrap(
+                ref_type=ref_type,
+                parent=parent,
+                is_optional=is_optional,
+                value=value,
+                key=key,
+            )
+
         value._set_key(key)
         value._set_parent(parent)
         return value

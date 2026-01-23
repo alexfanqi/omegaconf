@@ -240,6 +240,12 @@ def test_node_wrap(
         param(List[int], Plugin(), ValidationError, id="plugin_to_list[int]"),
         # ListConfig
         param(List[Any], [1, 2, 3], ListConfig(content=[1, 2, 3]), id="ListConfig"),
+        param(
+            tuple,
+            (1, 2, 3),
+            ListConfig(content=(1, 2, 3)),
+            id="ListConfig_from_tuple",
+        ),
         param(Dict[Any, Any], [1, 2, 3], ValidationError, id="list_to_dict"),
         param(Dict[str, int], [1, 2, 3], ValidationError, id="list_to_dict[str-int]"),
         param(Any, [1, 2, 3], ListConfig(content=[1, 2, 3]), id="list_to_any"),
@@ -1024,6 +1030,34 @@ def test_is_supported_union_annotation(input_: Any, expected: bool) -> None:
 )
 def test_get_ref_type(obj: Any, expected: Any) -> None:
     assert _utils.get_type_hint(obj) == expected
+
+
+@mark.parametrize(
+    "obj, expected",
+    [
+        param(Union[int, str], [int, str], id="int_str"),
+        param(
+            Union[int, str, ListConfig], [int, str, ListConfig], id="int_str_listconfig"
+        ),
+        param(Union[Plugin, ListConfig], [Plugin, ListConfig], id="plugin_listconfig"),
+        param(Union[str, List[str]], [str, List[str]], id="str_list_str"),
+        param(Union[str, Dict[str, Any]], [str, Dict[str, Any]], id="str_dict_str_any"),
+    ],
+)
+def test_get_union_types(obj: Any, expected: Any) -> None:
+    assert _utils.get_union_types(obj) == expected
+
+
+@mark.parametrize(
+    "obj",
+    [
+        param(Union[int], id="single_arg"),
+        param(Union[type(None), str], id="explicit_none"),
+    ],
+)
+def test_get_invalid_union_types(obj: Any) -> None:
+    with raises(UnsupportedValueType):
+        _utils.get_union_types(obj)
 
 
 @mark.parametrize(
