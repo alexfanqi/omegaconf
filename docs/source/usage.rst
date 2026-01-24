@@ -175,7 +175,7 @@ From structured config
 ^^^^^^^^^^^^^^^^^^^^^^
 
 You can create OmegaConf objects from structured config classes or objects. This provides static and runtime type safety.
-See :doc:`structured_config` for more details, or keep reading for a minimal example.
+See :doc:`structured_config` (including :ref:`structured_config_unions`) for more details, or keep reading for a minimal example.
 
 .. doctest::
 

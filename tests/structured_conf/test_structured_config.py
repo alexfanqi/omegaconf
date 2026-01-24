@@ -21,6 +21,7 @@ from omegaconf import (
     MissingMandatoryValue,
     OmegaConf,
     ReadonlyConfigError,
+    UnionNode,
     ValidationError,
     _utils,
 )
@@ -227,10 +228,6 @@ class TestConfigs:
         assert OmegaConf.is_missing(cfg, "no_default")
 
         OmegaConf.structured(module.NoDefaultValue(no_default=10)) == {"no_default": 10}
-
-    def test_union_errors(self, module: Any) -> None:
-        with raises(ValueError):
-            OmegaConf.structured(module.UnionError)
 
     def test_config_with_list(self, module: Any) -> None:
         def validate(cfg: DictConfig) -> None:
@@ -2388,8 +2385,122 @@ class TestUnionsOfPrimitiveTypes:
         assert _utils.get_type_hint(cfg, "list_no_subscript") == List[Any]
         assert _utils.get_type_hint(cfg, "tuple_no_subscript") == Tuple[Any, ...]
 
-    def test_assign_path_to_string_typed_field(self, module: Any) -> None:
-        cfg = OmegaConf.create(module.StringConfig)
-        cfg.null_default = Path("hello.txt")
-        assert isinstance(cfg.null_default, str)
-        assert cfg.null_default == "hello.txt"
+
+def test_assign_path_to_string_typed_field(module: Any) -> None:
+    cfg = OmegaConf.create(module.StringConfig)
+    cfg.null_default = Path("hello.txt")
+    assert isinstance(cfg.null_default, str)
+    assert cfg.null_default == "hello.txt"
+
+
+class TestStructuredUnions:
+    def test_union_set_valid_value(self, module: Any) -> None:
+        cfg = OmegaConf.structured(module.Book)
+        value = ["dude1", "dude2"]
+        cfg.author = value
+        assert cfg.author == value
+        assert isinstance(cfg._get_node("author"), UnionNode)
+
+    def test_union_set_valid_value_nested(self, module: Any) -> None:
+        cfg = OmegaConf.structured(module.Shelf)
+        value = module.Book(author="foo")
+        cfg.content = value
+        assert cfg.content == value
+        assert isinstance(cfg._get_node("content"), UnionNode)
+
+    def test_union_set_valid_value_nested_list(self, module: Any) -> None:
+        cfg = OmegaConf.structured(module.Shelf2)
+        value = [module.Book(), module.Book()]
+        cfg.content = value
+        assert cfg.content == value
+        assert isinstance(cfg._get_node("content"), UnionNode)
+
+    def test_union_set_invalid_value(self, module: Any) -> None:
+        cfg = OmegaConf.structured(module.Book)
+        value = module.Book()
+        with raises(ValidationError):
+            cfg.author = value
+
+    def test_optional_union_create(self, module: Any) -> None:
+        cfg = OmegaConf.structured(module.OptionalBook(author=None))
+        assert isinstance(cfg._get_node("author"), UnionNode)
+        assert cfg._get_node("author")._metadata.ref_type == Union[str, List[str]]
+        assert cfg._get_node("author")._is_optional()
+
+    def test_non_optional_union_create(self, module: Any) -> None:
+        with raises(ValidationError):
+            OmegaConf.structured(module.Book(author=None))
+
+    def test_optional_union_set_none(self, module: Any) -> None:
+        cfg = OmegaConf.structured(module.OptionalBook)
+        cfg.author = None
+
+    def test_non_optional_union_set_none(self, module: Any) -> None:
+        cfg = OmegaConf.structured(module.Book)
+        with raises(ValidationError):
+            cfg.author = None
+
+    @mark.parametrize(
+        "obj,value,node",
+        [
+            param("DictUnion", {"foo": 0.33, "foo2": 10}, "dict", id="dict"),
+            param("ListUnion", [1, 2, 0.33], "list", id="list"),
+        ],
+    )
+    def test_cfg_set_valid_union_value(
+        self, module: Any, obj: str, value: Any, node: str
+    ) -> None:
+        class_ = getattr(module, obj)
+        cfg = OmegaConf.structured(class_)
+        cfg[node] = value
+        assert cfg[node] == value
+
+    @mark.parametrize(
+        "obj,value,node",
+        [
+            param("DictUnion", {"foo": False}, "dict", id="dict-bool"),
+            param("DictUnion", {"foo": "invalid"}, "dict", id="dict-str"),
+            param("DictUnion", {"foo": Color.BLUE}, "dict", id="dict-enum"),
+            param("DictUnion", {"foo": User()}, "dict", id="dict-user"),
+            param("DictUnion", {"foo": None}, "dict", id="dict-none"),
+            param("ListUnion", [1, 2, False], "list", id="list-bool"),
+            param("ListUnion", [1, 2, "invalid"], "list", id="list-str"),
+            param("ListUnion", [1, 2, Color.BLUE], "list", id="list-enum"),
+            param("ListUnion", [1, 2, User()], "list", id="list-user"),
+            param("ListUnion", [1, 2, None], "list", id="list-none"),
+        ],
+    )
+    def test_cfg_set_invalid_union_value(
+        self, module: Any, obj: str, value: Any, node: str
+    ) -> None:
+        class_ = getattr(module, obj)
+        cfg = OmegaConf.structured(class_)
+        with raises(ValidationError):
+            cfg[node] = value
+
+    @mark.parametrize(
+        "value,node",
+        [
+            param(DictConfig({"foo": False}), "union_dict", id="union-dict"),
+            param(ListConfig([1, 2, False]), "union_list", id="union-list"),
+        ],
+    )
+    def test_cfg_set_container_in_union(
+        self, module: Any, node: str, value: Any
+    ) -> None:
+        cfg = OmegaConf.structured(module.UnionWithContainer)
+        cfg[node] = value
+        assert cfg[node] == value
+        assert isinstance(cfg._get_node(node), UnionNode)
+
+    def test_union_with_baseclass(self, module: Any) -> None:
+        cfg = OmegaConf.structured(module.UnionWithBaseclass)
+        cfg.foo = module.Subclass1()
+        assert cfg.foo == module.Subclass1()
+        assert isinstance(cfg._get_node("foo"), UnionNode)
+
+    def test_union_with_subclasses(self, module: Any) -> None:
+        cfg = OmegaConf.structured(module.UnionOfSubclasses)
+        cfg.foo = module.Subclass1
+        assert cfg.foo == module.Subclass1()
+        assert isinstance(cfg._get_node("foo"), UnionNode)

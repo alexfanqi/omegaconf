@@ -8,7 +8,15 @@ from typing import Any, Callable, List, MutableSequence, Optional, Union
 from _pytest.python_api import RaisesContext
 from pytest import mark, param, raises
 
-from omegaconf import MISSING, AnyNode, DictConfig, ListConfig, OmegaConf, flag_override
+from omegaconf import (
+    MISSING,
+    AnyNode,
+    DictConfig,
+    ListConfig,
+    OmegaConf,
+    UnionNode,
+    flag_override,
+)
 from omegaconf._utils import _ensure_container
 from omegaconf.base import Node
 from omegaconf.errors import (
@@ -21,7 +29,7 @@ from omegaconf.errors import (
     ValidationError,
 )
 from omegaconf.nodes import IntegerNode, StringNode
-from tests import Color, IllegalType, User
+from tests import Color, IllegalType, ListUnion, User
 
 
 def test_list_value() -> None:
@@ -1097,3 +1105,22 @@ def test_validate_set(cfg: ListConfig, key: int, value: Any, error: bool) -> Non
             cfg._validate_set(key, value)
     else:
         cfg._validate_set(key, value)
+
+
+def test_set_valid_union_value() -> None:
+    cfg = OmegaConf.structured(ListUnion)
+    cfg.list = [4, 3.14]
+    assert cfg.list == [4, 3.14]
+    assert isinstance(cfg.list._get_node(0), UnionNode)  # type: ignore
+    assert isinstance(cfg.list._get_node(1), UnionNode)  # type: ignore
+    assert cfg.list[0] == 4
+    assert cfg.list[1] == 3.14
+
+
+def test_set_invalid_union_value() -> None:
+    cfg = OmegaConf.structured(ListUnion)
+    with raises(ValidationError):
+        cfg.list = [1, True, "foo"]
+    assert cfg == OmegaConf.structured(ListUnion)
+    assert isinstance(cfg.list._get_node(0), UnionNode)  # type: ignore
+    assert cfg.list[0] == 1

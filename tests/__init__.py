@@ -147,8 +147,18 @@ class StructuredWithMissing:
 
 
 @dataclass
-class UnionError:
-    x: Union[int, List[str]] = 10
+class UnionClass:
+    foo: Union[str, int] = 1
+
+
+@dataclass
+class DictUnion:
+    dict: Dict[str, Union[int, float]] = field(default_factory=lambda: {"a": 1})
+
+
+@dataclass
+class ListUnion:
+    list: List[Union[int, float]] = field(default_factory=lambda: [1])
 
 
 @dataclass

@@ -58,6 +58,7 @@ from tests import (
     OuterB,
     Package,
     Plugin,
+    UnionClass,
     User,
     Users,
 )
@@ -1488,3 +1489,42 @@ def test_into_custom_resolver_that_throws(
     )
     expected = {"d": 20, "i": "zzz"}
     assert OmegaConf.merge(*configs) == expected
+
+
+@mark.parametrize("obj, expected", [({"foo": 4}, 4), ({"foo": "var"}, "var")])
+def test_merge_union_node_with_valid_value(obj: Any, expected: Any) -> None:
+    cfg = OmegaConf.structured(UnionClass)
+    res = OmegaConf.merge(cfg, obj)
+    assert res.foo == expected
+    assert isinstance(res._get_node("foo"), UnionNode)  # type: ignore
+
+
+@mark.parametrize(
+    "cfg, obj",
+    [
+        (OmegaConf.structured(UnionClass), {"foo": User()}),
+        (
+            OmegaConf.create(
+                DictConfig(
+                    ref_type=Dict[str, Union[int, float]],
+                    element_type=Union[int, float],
+                    key_type=str,
+                    content={"foo": 3.1415},
+                )
+            ),
+            {"foo": User()},
+        ),
+        (
+            DictConfig(
+                ref_type=Dict[str, Union[int, float]],
+                element_type=Union[int, float],
+                key_type=str,
+                content={"foo": 3.1415},
+            ),
+            {"foo": "var"},
+        ),
+    ],
+)
+def test_merge_union_node_with_invalid_value(cfg: Any, obj: Any) -> None:
+    with raises(ValidationError):
+        OmegaConf.merge(cfg, obj)

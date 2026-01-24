@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import attr
 from pytest import importorskip
 
-from omegaconf import II, MISSING, SI
+from omegaconf import II, MISSING, SI, DictConfig, ListConfig
 from tests import Color, Enum1
 
 if sys.version_info >= (3, 8):  # pragma: no cover
@@ -575,8 +575,64 @@ class NestedWithNone:
 
 
 @attr.s(auto_attribs=True)
-class UnionError:
-    x: Union[int, List[str]] = 10
+class Book:
+    author: Union[str, List[str]] = "dude"
+
+
+@attr.s(auto_attribs=True)
+class Shelf:
+    content: Union[Book, int] = 1
+
+
+@attr.s(auto_attribs=True)
+class Shelf2:
+    content: Union[Book, List[Book]] = Book()
+
+
+@attr.s(auto_attribs=True)
+class OptionalBook:
+    author: Optional[Union[str, List[str]]] = "author"
+
+
+@attr.s(auto_attribs=True)
+class ListUnion:
+    list: List[Union[float, int]] = [1, 3.14]
+
+
+@attr.s(auto_attribs=True)
+class DictUnion:
+    dict: Dict[str, Union[float, int]] = {"foo": 1}
+
+
+@attr.s(auto_attribs=True)
+class UnionWithContainer:
+    union_dict: Union[DictConfig, int] = DictConfig({"foo": 1})
+    union_list: Union[ListConfig, int] = ListConfig([1, 2])
+
+
+@attr.s(auto_attribs=True)
+class Base:
+    foo: int = 1
+
+
+@attr.s(auto_attribs=True)
+class Subclass1(Base):
+    pass
+
+
+@attr.s(auto_attribs=True)
+class Subclass2(Base):
+    pass
+
+
+@attr.s(auto_attribs=True)
+class UnionWithBaseclass:
+    foo: Union[Base, int] = Base()
+
+
+@attr.s(auto_attribs=True)
+class UnionOfSubclasses:
+    foo: Union[Subclass1, Subclass2] = Subclass1()
 
 
 @attr.s(auto_attribs=True)

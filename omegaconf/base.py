@@ -16,7 +16,9 @@ from ._utils import (
     _is_special,
     format_and_raise,
     get_union_candidates,
+    get_union_types,
     get_value_kind,
+    is_structured_config,
     is_union_annotation,
     is_valid_value_annotation,
     split_key,
@@ -806,19 +808,45 @@ class UnionNode(Box):
 
     def __init__(
         self,
-        content: Any,
-        ref_type: Any,
+        content: Any = _DEFAULT_MARKER_,
+        ref_type: Any = None,
         is_optional: bool = True,
         key: Any = None,
         parent: Optional[Box] = None,
+        *,
+        element_types: Optional[List[Any]] = None,
+        value: Any = _DEFAULT_MARKER_,
     ) -> None:
         try:
-            if not is_union_annotation(ref_type):  # pragma: no cover
+            if value is not _DEFAULT_MARKER_:
+                if content is not _DEFAULT_MARKER_:
+                    raise ValueError("UnionNode got both 'content' and 'value'")
+                content = value
+
+            if element_types is not None:
+                if ref_type is None:
+                    ref_type = Union[tuple(element_types)]
+                else:
+                    if get_union_types(ref_type) != list(element_types):
+                        raise ValueError(
+                            "UnionNode got mismatching 'ref_type' and 'element_types'"
+                        )
+
+            if ref_type is None or not is_union_annotation(
+                ref_type
+            ):  # pragma: no cover
                 msg = (
                     f"UnionNode got unexpected ref_type {ref_type}. Please file a bug"
                     + " report at https://github.com/omry/omegaconf/issues"
                 )
                 raise AssertionError(msg)
+
+            if element_types is None:
+                element_types = get_union_types(ref_type)
+
+            if content is _DEFAULT_MARKER_:
+                content = "???"
+
             if not isinstance(parent, (Container, NoneType)):
                 raise ConfigTypeError("Parent type is not omegaconf.Container")
             super().__init__(
@@ -832,9 +860,19 @@ class UnionNode(Box):
                 ),
             )
             self.__dict__["_candidates"] = get_union_candidates(ref_type)
+            self.__dict__["_element_types"] = element_types
             self._set_value(content)
         except Exception as ex:
             format_and_raise(node=None, key=key, value=content, msg=str(ex), cause=ex)
+
+    @property
+    def element_types(self) -> List[Any]:
+        element_types = self.__dict__.get("_element_types")
+        if element_types is None:
+            # Backward/forward compatibility: compute from ref_type.
+            element_types = get_union_types(self.__dict__["_metadata"].ref_type)
+            self.__dict__["_element_types"] = element_types
+        return list(element_types)
 
     def _get_full_key(self, key: Optional[Union[DictKeyType, int]]) -> str:
         parent = self._get_parent()
@@ -910,6 +948,18 @@ class UnionNode(Box):
             type_override = value.get("_type_")
 
         if type_override is not None:
+            # If the currently selected structured config has a real `_type_` field,
+            # treat `_type_` as data and do NOT use it as a Union discriminator.
+            current = self.__dict__["_content"]
+            if (
+                isinstance(current, DictConfig)
+                and is_structured_config(current._metadata.object_type)
+                and "_type_" in current
+            ):
+                current.merge_with(value)
+                self.__dict__["_content"] = current
+                return
+
             candidates = self.__dict__["_candidates"]
             candidate_ref_type = None
 
@@ -979,22 +1029,35 @@ class UnionNode(Box):
                 content._set_value(value, flags=flags)
                 return
 
-        # Explicit selection via string
-        if isinstance(value, str):
-            candidates = self.__dict__["_candidates"]
-            if value in candidates:
-                candidate_ref_type = candidates[value]
-                self.__dict__["_content"] = _node_wrap(
-                    value=candidate_ref_type,
-                    ref_type=candidate_ref_type,
-                    is_optional=False,
-                    key=None,
-                    parent=self,
-                )
-                return
+        # Explicit selection via string (structured unions only).
+        #
+        # Do NOT treat arbitrary strings as type selectors for unions that include
+        # `str` itself (e.g. Union[int, str]) because that makes values like
+        # "str" and "int" ambiguous.
+        if isinstance(value, str) and str not in ref_type.__args__:
+            if any(is_structured_config(arg) for arg in ref_type.__args__):
+                candidates = self.__dict__["_candidates"]
+                if value in candidates:
+                    candidate_ref_type = candidates[value]
+                    self.__dict__["_content"] = _node_wrap(
+                        value=candidate_ref_type,
+                        ref_type=candidate_ref_type,
+                        is_optional=False,
+                        key=None,
+                        parent=self,
+                    )
+                    return
 
         for candidate_ref_type in ref_type.__args__:
             try:
+                # `bool` is a subclass of `int` in Python. For unions that do not
+                # include `bool` explicitly, reject bool values for numeric unions.
+                if (
+                    isinstance(value, bool)
+                    and candidate_ref_type in (int, float)
+                    and bool not in ref_type.__args__
+                ):
+                    continue
                 self.__dict__["_content"] = _node_wrap(
                     value=value,
                     ref_type=candidate_ref_type,

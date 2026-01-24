@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Union, Optional, Any
+from typing import Any, Optional, Union
+
 import pytest
-from omegaconf import OmegaConf, ValidationError, DictConfig
+
+from omegaconf import DictConfig, OmegaConf, ValidationError
 
 
 @dataclass
@@ -424,8 +426,6 @@ def test_union_with_str_skip_selection():
     cfg = OmegaConf.structured(Config)
 
     # "A" matches class name A. But str is in Union.
-    # So it should NOT be converted to A().
-    # It should result in Unsupported value type (because DictConfig can't be str)
-    # or validated as a string if OmegaConf supports that transition (it currently errors).
-    with pytest.raises(ValidationError, match="Unsupported value type"):
-        cfg.val = "A"
+    # So it should NOT be converted to A(). It should be treated as a plain string.
+    cfg.val = "A"
+    assert cfg.val == "A"

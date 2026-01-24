@@ -5,7 +5,7 @@ import sys
 from enum import Enum
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Dict, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Tuple, Type, Union
 
 from pytest import fixture, mark, param, raises
 
@@ -829,6 +829,13 @@ def test_deepcopy(obj: Any) -> None:
         (UnionNode("${interp}", Union[int, bytes]), 999, False),
         (UnionNode("${interp}", Union[int, bytes]), IntegerNode(999), False),
         (UnionNode("${interp}", Union[int, bytes]), AnyNode(999), False),
+        (
+            UnionNode(ref_type=Union[int, str], element_types=[int, str], value=1),
+            1,
+            True,
+        ),
+        (UnionNode(element_types=[int, str], value="str"), "str", True),
+        (UnionNode(element_types=[int, str], value="str"), AnyNode(value="str"), True),
     ],
 )
 def test_eq(node: ValueNode, value: Any, expected: Any) -> None:
@@ -1039,3 +1046,73 @@ def test_path_str_hash_collision_handling() -> None:
     assert dict_cfg.by_path.file == path_obj
     assert dict_cfg.by_string.file == path_str
     assert dict_cfg.by_path.file != dict_cfg.by_string.file
+
+
+@mark.parametrize(
+    "node, value",
+    [
+        (UnionNode(ref_type=Union[int, str], element_types=[int, str], value=1), 1),
+        (UnionNode(element_types=[int, str], value="str"), "str"),
+        (UnionNode(element_types=[int, str]), "str"),
+        (UnionNode(element_types=[int, str, type(None)]), None),
+        (UnionNode(element_types=[DictConfig, str]), DictConfig({"a": 1})),
+        (UnionNode(element_types=[ListConfig, int]), ListConfig([1, 2])),
+        (UnionNode(element_types=[List[int], int]), [1, 2]),
+        (UnionNode(element_types=[List[int], int]), ListConfig(content=[1, 2])),
+        (UnionNode(element_types=[List[bool], bool]), [True, False]),
+        (UnionNode(element_types=[List[float], float]), [3.14, 9.67]),
+        (UnionNode(element_types=[List[str], str]), ["foo", "foo2"]),
+        (
+            UnionNode(element_types=[List[User], str]),
+            [User(name="user1", age=21), User(name="user2", age=45)],
+        ),
+        (UnionNode(element_types=[List[int], int]), 1),
+        (UnionNode(element_types=[Dict[str, int], int]), {"foo": 1}),
+        (
+            UnionNode(element_types=[Dict[str, int], int]),
+            DictConfig(content={"foo": 1}),
+        ),
+        (
+            UnionNode(element_types=[Dict[str, int], int]),
+            DictConfig(content={"foo": 1}, ref_type=Dict[str, int]),
+        ),
+        (UnionNode(element_types=[Dict[str, str], str]), {"foo": "var"}),
+        (UnionNode(element_types=[Dict[str, bool], bool]), {"foo": True}),
+        (UnionNode(element_types=[Dict[str, float], float]), {"foo": 3.14}),
+        (UnionNode(element_types=[bool, float], is_optional=True), None),
+        (UnionNode(element_types=[float, int]), IntegerNode(0)),
+    ],
+)
+def test_valid_value_union_node(node: ValueNode, value: Any) -> None:
+    expected = copy.deepcopy(value)
+    node._set_value(value)
+    assert node._value() == expected
+    if isinstance(expected, Node):
+        assert type(node._value()) == type(expected)
+    assert isinstance(node, UnionNode)
+
+
+@mark.parametrize(
+    "node, value",
+    [
+        (UnionNode(element_types=[int, str], value="str"), User()),
+        (UnionNode(element_types=[int, ListConfig]), [1, 2]),
+        (UnionNode(element_types=[int, ListConfig]), {"foo": "var"}),
+        (UnionNode(element_types=[int, DictConfig]), {"foo": "var"}),
+        (UnionNode(element_types=[int, DictConfig]), [1, 2]),
+        (UnionNode(element_types=[int, str], is_optional=False, value="foo"), None),
+        (
+            UnionNode(element_types=[Dict[str, List[int]], float]),
+            {"foo": [1, "invalid_value"]},
+        ),
+        (UnionNode(element_types=[Dict[str, List[int]], float]), {"foo": [1, User()]}),
+        (
+            UnionNode(element_types=[Dict[str, int], int]),
+            DictConfig(content={"foo": "invalid"}),
+        ),
+        (UnionNode(element_types=[List[int], int]), ListConfig(content=["invalid", 1])),
+    ],
+)
+def test_invalid_value_union_node(node: ValueNode, value: Any) -> None:
+    with raises(ValidationError):
+        node._set_value(value)

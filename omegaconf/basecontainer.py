@@ -221,11 +221,35 @@ class BaseContainer(Container, ABC):
         from omegaconf import MISSING, DictConfig, ListConfig
 
         def convert(val: Node) -> Any:
+            from omegaconf._utils import is_structured_config, is_union_annotation
             from omegaconf.base import UnionNode
 
             # UnionNode needs special handling: dereference to get actual value node
             if isinstance(val, UnionNode):
+                union = val
                 val = val._dereference_node()
+
+                if isinstance(val, Container):
+                    converted = BaseContainer._to_content(
+                        val,
+                        resolve=resolve,
+                        throw_on_missing=throw_on_missing,
+                        enum_to_str=enum_to_str,
+                        structured_config_mode=structured_config_mode,
+                    )
+
+                    # When serializing a Union-typed structured config, inject
+                    # `_type_` so we can round-trip the selected member.
+                    if (
+                        isinstance(val, DictConfig)
+                        and isinstance(converted, dict)
+                        and is_union_annotation(union._metadata.ref_type)
+                        and is_structured_config(val._metadata.object_type)
+                        and "_type_" not in converted
+                    ):
+                        t = val._metadata.object_type
+                        converted["_type_"] = f"{t.__module__}.{t.__name__}"
+                    return converted
 
             value = val._value()
             if enum_to_str and isinstance(value, Enum):

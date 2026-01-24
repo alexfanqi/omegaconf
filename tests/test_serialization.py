@@ -15,6 +15,8 @@ from omegaconf._utils import get_type_hint
 from omegaconf.base import Box
 from tests import (
     Color,
+    DictUnion,
+    ListUnion,
     NestedContainers,
     PersonA,
     PersonD,
@@ -23,6 +25,7 @@ from tests import (
     SubscriptedList,
     SubscriptedListOpt,
     UnionAnnotations,
+    UnionClass,
     UntypedDict,
     UntypedList,
 )
@@ -144,6 +147,28 @@ def test_pickle(obj: Any) -> None:
         assert c1._metadata.optional is True
         if isinstance(c, DictConfig):
             assert c1._metadata.key_type is Any
+
+
+@mark.parametrize(
+    "obj,ref_type,key",
+    [
+        (OmegaConf.structured(DictUnion), Union[int, float], "dict"),
+        (OmegaConf.structured(ListUnion), Union[int, float], "list"),
+        (OmegaConf.structured(UnionClass), Union[str, int], "foo"),
+    ],
+)
+def test_pickle_union(obj: Any, ref_type: Any, key: str) -> None:
+    from omegaconf._utils import get_union_types
+
+    obj_dump = pickle.dumps(obj)
+    c = pickle.loads(obj_dump)
+    node = c._get_node(key)
+    assert obj == c
+    if isinstance(node, (DictConfig, ListConfig)):
+        assert node._metadata.element_type == ref_type
+    else:
+        assert node._metadata.ref_type == ref_type
+        assert node.element_types == get_union_types(ref_type)
 
 
 def test_load_empty_file(tmpdir: str) -> None:

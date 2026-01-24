@@ -28,6 +28,7 @@ from .errors import (
     ConfigValueError,
     GrammarParseError,
     OmegaConfBaseException,
+    UnsupportedValueType,
     ValidationError,
 )
 from .grammar_parser import SIMPLE_INTERPOLATION_PATTERN, parse
@@ -759,14 +760,52 @@ def is_sequence_annotation(type_: Any) -> bool:
 
 
 def is_supported_union_annotation(obj: Any) -> bool:
-    """Currently only primitive types and structured configs are supported in Unions."""
+    """Return True if a Union annotation is supported as a value type hint."""
     if not is_union_annotation(obj):
         return False
-    args = obj.__args__
+
+    try:
+        args = get_union_types(obj)
+    except UnsupportedValueType:
+        return False
+
+    from .dictconfig import DictConfig
+    from .listconfig import ListConfig
+
     return all(
-        is_primitive_type_annotation(arg) or is_structured_config(arg) or arg is Any
+        is_primitive_type_annotation(arg)
+        or is_structured_config(arg)
+        or is_container_annotation(arg)
+        or arg in (Any, DictConfig, ListConfig)
         for arg in args
     )
+
+
+def get_union_types(ref_type: Any) -> List[Any]:
+    """Return the element types of a Union annotation.
+
+    This helper validates the Union according to OmegaConf constraints.
+    """
+
+    if not is_union_annotation(ref_type):
+        raise UnsupportedValueType(
+            f"Expected a Union annotation, got {type_str(ref_type)}"
+        )
+
+    args = getattr(ref_type, "__args__", None)
+    assert args is not None
+    types = list(args)
+
+    if len(types) < 2:
+        raise UnsupportedValueType(f"Invalid Union annotation: {type_str(ref_type)}")
+
+    # Reject explicit Union[NoneType, T] and encourage Optional[T] instead.
+    if len(types) == 2 and types[0] is NoneType:
+        raise UnsupportedValueType(
+            f"Unsupported Union annotation (use Optional[...] instead): {type_str(ref_type)}"
+        )
+
+    return types
 
 
 def get_union_candidates(type_: Any) -> Dict[str, Any]:
@@ -777,7 +816,9 @@ def get_union_candidates(type_: Any) -> Dict[str, Any]:
         if arg is NoneType:
             continue
         if is_structured_config(arg):
-            name = get_type_of(arg).__name__
+            t = get_type_of(arg)
+            name = t.__name__
+            res[f"{t.__module__}.{t.__name__}"] = arg
         else:
             name = type_str(arg)
         res[name] = arg

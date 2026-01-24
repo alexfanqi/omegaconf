@@ -15,7 +15,7 @@ Structured Configs
     import os
     import pathlib
     from pytest import raises
-    from typing import Dict, Any
+    from typing import Dict, Any, Union, List
     import sys
     os.environ['USER'] = 'omry'
 
@@ -416,6 +416,8 @@ must precisely match one of the types in the ``Union`` annotation:
         full_key: u
         object_type=StrOrInt
 
+.. _structured_config_unions:
+
 Structured config unions
 +++++++++++++++++++++++
 
@@ -423,37 +425,90 @@ Structured config unions
 ``typing.Dict``). When a field is annotated with a union of multiple structured config classes, OmegaConf
 will attempt to match the assigned data to one of the classes in the union.
 
-By default, OmegaConf uses duck-typing to select a matching class. However, if union members have
-overlapping fields, duck-typing may be ambiguous. To ensure the correct type is preserved during
-serialization and round-tripping, OmegaConf uses a special ``_type_`` field. This field is automatically
-added to exported dictionaries when a structured config is stored in a union-typed field (including
-union-typed container elements), and it is consumed during merge to select the correct candidate.
+OmegaConf supports two ways to select a member of a structured config union:
+
+- **String selection**: Assigning a string matching the name of one of the classes in the union.
+  This works only if ``str`` is not itself a member of the union.
+- **Type discriminator**: Providing a dictionary or ``DictConfig`` containing a special ``_type_`` field.
+  This is the recommended approach as it works even if ``str`` is part of the union.
+
+String selection
+~~~~~~~~~~~~~~~~
+
+If a union consists of structured config classes (and optionally ``None``), you can select a member
+by assigning its class name as a string:
 
 .. doctest::
 
-    >>> from typing import List, Union
-    >>>
     >>> @dataclass
     ... class UserA:
     ...     name: str = "User A"
-    ...     level: int = 1
     ...
     >>> @dataclass
     ... class UserB:
     ...     name: str = "User B"
-    ...     rank: int = 10
     ...
     >>> @dataclass
     ... class Group:
-    ...     members: List[Union[UserA, UserB]] = field(default_factory=list)
+    ...     member: Union[UserA, UserB] = field(default_factory=UserA)
     ...
     >>> cfg = OmegaConf.structured(Group)
-    >>> cfg.members.append(UserB(name="Joe", rank=5))
-    >>> data = OmegaConf.to_container(cfg, resolve=False)
-    >>> assert data["members"][0]["_type_"].endswith(".UserB")
-    >>> cfg2 = OmegaConf.structured(Group)
-    >>> cfg2.merge_with(data)
-    >>> assert OmegaConf.get_type(cfg2.members[0]) is UserB
+    >>> cfg.member = "UserB"
+    >>> assert OmegaConf.get_type(cfg.member) is UserB
+    >>> assert cfg.member.name == "User B"
+
+Note that if ``str`` is a member of the union, the assigned string will be treated as a value
+rather than a selector:
+
+.. doctest::
+
+    >>> @dataclass
+    ... class GroupWithStr:
+    ...     member: Union[UserA, str] = field(default_factory=UserA)
+    ...
+    >>> cfg = OmegaConf.structured(GroupWithStr)
+    >>> cfg.member = "UserA"
+    >>> assert isinstance(cfg.member, str)
+    >>> assert cfg.member == "UserA"
+
+Type discriminator
+~~~~~~~~~~~~~~~~~~
+
+By default, OmegaConf uses duck-typing to select a matching class when a dictionary is assigned
+to a union field. However, if union members have overlapping fields, duck-typing may be ambiguous.
+To ensure the correct type is selected, you can use the ``_type_`` field:
+
+- The value of ``_type_`` should be the name of the desired class (e.g., ``"UserB"``) or its
+  fully qualified name (e.g., ``"my_module.UserB"``).
+- The ``_type_`` field is consumed during merge and does not remain in the resulting config object.
+- This field is automatically added to exported dictionaries (via ``OmegaConf.to_container``)
+  when a structured config is stored in a union-typed field, ensuring correct round-tripping.
+
+.. doctest::
+
+    >>> cfg = OmegaConf.structured(Group)
+    >>> # Select UserB and update its 'name' field
+    >>> cfg.member = {"_type_": "UserB", "name": "Joe"}
+    >>> assert OmegaConf.get_type(cfg.member) is UserB
+    >>> assert cfg.member.name == "Joe"
+    >>> # The _type_ field is not present in the resulting config
+    >>> assert "_type_" not in cfg.member
+
+You can also use ``OmegaConf.update`` or merge from a YAML string:
+
+.. doctest::
+
+    >>> cfg = OmegaConf.structured(Group)
+    >>> OmegaConf.update(cfg, "member", {"_type_": "UserB", "name": "Joe"})
+    >>> assert cfg.member.name == "Joe"
+    >>>
+    >>> yaml_data = """
+    ... member:
+    ...   _type_: UserB
+    ...   name: Joe
+    ... """
+    >>> cfg.merge_with(OmegaConf.create(yaml_data))
+    >>> assert cfg.member.name == "Joe"
 
 If a structured config class explicitly defines a field named ``_type_``, OmegaConf treats it as a regular
 data field and will not use it as a discriminator for union type selection. This ensures user data is never
