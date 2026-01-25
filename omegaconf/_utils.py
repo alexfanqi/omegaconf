@@ -279,14 +279,25 @@ def is_union_annotation(type_: Any) -> bool:
 
 
 def is_literal_annotation(type_: Any) -> bool:
+    origin = getattr(type_, "__origin__", None)
+
     try:
-        from typing import Literal
-    except ImportError:
-        try:
-            from typing_extensions import Literal
-        except ImportError:
-            return False
-    return getattr(type_, "__origin__", None) is Literal
+        from typing import Literal as _TypingLiteral
+
+        if origin is _TypingLiteral:
+            return True
+    except ImportError:  # pragma: no cover
+        pass
+
+    try:
+        from typing_extensions import Literal as _ExtLiteral
+
+        if origin is _ExtLiteral:
+            return True  # pragma: no cover
+    except ImportError:  # pragma: no cover
+        pass
+
+    return False
 
 
 def _resolve_optional(type_: Any) -> Tuple[bool, Any]:

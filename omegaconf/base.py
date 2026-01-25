@@ -25,6 +25,7 @@ from ._utils import (
     type_str,
 )
 from .errors import (
+    ConfigAttributeError,
     ConfigKeyError,
     ConfigTypeError,
     InterpolationKeyError,
@@ -937,7 +938,6 @@ class UnionNode(Box):
                         f"Value '$VALUE' is incompatible with type hint '{type_str(type_hint)}'"
                     )
             self.__dict__["_content"] = value
-            self.__dict__["_content"] = value
             return
 
         # Explicit selection via _type_ field in dict/DictConfig
@@ -956,8 +956,9 @@ class UnionNode(Box):
                 and is_structured_config(current._metadata.object_type)
                 and "_type_" in current
             ):
-                current.merge_with(value)
-                self.__dict__["_content"] = current
+                current_dc: DictConfig = current
+                current_dc.merge_with(value)
+                self.__dict__["_content"] = current_dc
                 return
 
             candidates = self.__dict__["_candidates"]
@@ -984,6 +985,11 @@ class UnionNode(Box):
                             break
                 except (ImportError, ValueError):
                     pass
+
+            if candidate_ref_type is None:
+                raise ValidationError(
+                    f"Unsupported _type_ discriminator: {type_override}"
+                )
 
             if candidate_ref_type is not None:
                 try:
@@ -1013,10 +1019,11 @@ class UnionNode(Box):
                             merge_value.pop("_type_")
 
                     if isinstance(merge_value, (dict, Container)):
+                        assert isinstance(node, DictConfig)
                         node.merge_with(merge_value)
                     else:
                         # Should not happen given outer checks
-                        pass
+                        assert False
 
                     self.__dict__["_content"] = node
                     return
@@ -1026,8 +1033,16 @@ class UnionNode(Box):
         if isinstance(value, Container):
             content = self.__dict__["_content"]
             if isinstance(content, Container):
-                content._set_value(value, flags=flags)
-                return
+                try:
+                    content._set_value(value, flags=flags)
+                    return
+                except (
+                    ValidationError,
+                    ConfigAttributeError,
+                    ConfigTypeError,
+                    ConfigKeyError,
+                ):
+                    pass
 
         # Explicit selection via string (structured unions only).
         #
@@ -1132,13 +1147,24 @@ class UnionNode(Box):
 
     def __getitem__(self, key: Any) -> Any:
         resolved = self._maybe_dereference_node()
+        if resolved is None:
+            raise TypeError(f"'{type(self).__name__}' object is not subscriptable")
+
         if resolved is self:
             content = self.__dict__["_content"]
-            if isinstance(content, Node):
+            from omegaconf.basecontainer import BaseContainer
+
+            if isinstance(content, BaseContainer):
                 return content[key]
             raise TypeError(f"'{type(self).__name__}' object is not subscriptable")
 
-        return resolved[key]
+        from omegaconf.basecontainer import BaseContainer
+
+        if isinstance(resolved, UnionNode):
+            return resolved[key]
+        if isinstance(resolved, BaseContainer):
+            return resolved[key]
+        raise TypeError(f"'{type(self).__name__}' object is not subscriptable")
 
     def _is_optional(self) -> bool:
         return self.__dict__["_metadata"].optional is True

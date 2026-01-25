@@ -1122,5 +1122,5 @@ def test_set_invalid_union_value() -> None:
     with raises(ValidationError):
         cfg.list = [1, True, "foo"]
     assert cfg == OmegaConf.structured(ListUnion)
-    assert isinstance(cfg.list._get_node(0), UnionNode)  # type: ignore
+    assert isinstance(cfg.list._get_node(0), UnionNode)
     assert cfg.list[0] == 1

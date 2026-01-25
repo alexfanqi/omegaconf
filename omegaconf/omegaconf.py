@@ -58,6 +58,9 @@ from ._utils import (
 from .base import Box, Container, ListMergeMode, Node, SCMode, UnionNode
 from .basecontainer import BaseContainer
 from .errors import (
+    ConfigAttributeError,
+    ConfigKeyError,
+    ConfigTypeError,
     MissingMandatoryValue,
     OmegaConfBaseException,
     UnsupportedInterpolationType,
@@ -1075,15 +1078,18 @@ def _node_wrap(
         )
     elif is_structured_config(ref_type) or is_structured_config(value):
         key_type, element_type = get_dict_key_value_types(value)
-        node = DictConfig(
-            ref_type=ref_type,
-            is_optional=is_optional,
-            content=value,
-            key=key,
-            parent=parent,
-            key_type=key_type,
-            element_type=element_type,
-        )
+        try:
+            node = DictConfig(
+                ref_type=ref_type,
+                is_optional=is_optional,
+                content=value,
+                key=key,
+                parent=parent,
+                key_type=key_type,
+                element_type=element_type,
+            )
+        except (ConfigAttributeError, ConfigTypeError, ConfigKeyError) as e:
+            raise ValidationError(e)
     elif is_literal_annotation(ref_type):
         node = LiteralNode(
             value=value,

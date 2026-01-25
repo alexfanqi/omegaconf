@@ -726,10 +726,54 @@ class DictConfig(BaseContainer, MutableMapping[Any, Any]):
 
             elif isinstance(value, DictConfig):
                 self._metadata.flags = copy.deepcopy(flags)
-                with flag_override(self, ["struct", "readonly"], False):
+
+                is_typed = is_structured_config(self._metadata.ref_type)
+                overrides = ["readonly"]
+
+                if not is_typed:
+                    overrides.append("struct")
+                    self._metadata.object_type = value._metadata.object_type
+                else:
+                    # Typed Config: Resolve object_type compatibility
+                    src_type = value._metadata.object_type
+                    ref_type = self._metadata.ref_type
+
+                    is_compatible = False
+                    if src_type is not None and src_type is not dict:
+                        try:
+                            if issubclass(src_type, ref_type):
+                                is_compatible = True
+                        except TypeError:
+                            pass
+
+                    if is_compatible:
+                        self._metadata.object_type = src_type
+                    else:
+                        if self._metadata.object_type is dict:
+                            self._metadata.object_type = ref_type
+
+                    # Initialize structure from type to allow strict assignment
+                    init_type = self._metadata.object_type
+                    if init_type is dict or init_type is None:
+                        init_type = ref_type
+
+                    if is_structured_config(init_type):
+                        ao = self._get_flag("allow_objects")
+                        data = get_structured_config_data(init_type, allow_objects=ao)
+                        # Disable strictness to allow population
+                        with flag_override(self, ["struct", "readonly"], False):
+                            for k, v in data.items():
+                                self.__setitem__(k, v)
+
+                with flag_override(self, overrides, False):
                     for k, v in value.__dict__["_content"].items():
+                        if (
+                            is_typed
+                            and isinstance(v, Node)
+                            and not isinstance(v, Container)
+                        ):
+                            v = v._value()
                         self.__setitem__(k, v)
-                self._metadata.object_type = value._metadata.object_type
 
             elif isinstance(value, dict):
                 if is_structured_config(self._metadata.ref_type):

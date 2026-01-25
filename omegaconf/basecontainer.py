@@ -96,7 +96,7 @@ class BaseContainer(Container, ABC):
         from omegaconf.base import UnionNode
 
         if isinstance(value, UnionNode):
-            resolved_node = value._dereference_node()
+            resolved_node: Optional[Node] = value._dereference_node()
         else:
             resolved_node = self._maybe_resolve_interpolation(
                 parent=self,
@@ -104,6 +104,8 @@ class BaseContainer(Container, ABC):
                 value=value,
                 throw_on_resolution_failure=True,
             )
+
+        assert resolved_node is not None
 
         return _get_value(resolved_node)
 
@@ -362,65 +364,6 @@ class BaseContainer(Container, ABC):
             return
 
         dest._validate_merge(value=src)
-
-        # Smart merge for Union types with explicit type info:
-        # We only apply this logic if the destination does NOT have an explicit field named `_type_`.
-        # If the user defined `_type_` as a field, we treat it as data, not metadata.
-        if (
-            is_union_annotation(dest._metadata.ref_type)
-            and not src._is_missing()
-            and "_type_" not in dest
-        ):
-            src_val = src._value()
-            if isinstance(src_val, dict) and "_type_" in src_val:
-                type_name = src_val["_type_"]
-                # Try to find matching candidate
-                candidates = dest._metadata.ref_type.__args__
-                for candidate in candidates:
-                    if candidate is Any or candidate is NoneType:
-                        continue
-                    origin = getattr(candidate, "__origin__", candidate)
-                    if not is_structured_config(origin):
-                        continue
-
-                    full_name = f"{origin.__module__}.{origin.__name__}"
-                    if full_name == type_name or origin.__name__ == type_name:
-                        # Found match. Switch type.
-                        # We need to ensure we don't merge the _type_ key itself into the object
-                        # as it is likely not a field of the dataclass.
-                        # However, src is a wrapper around the dict.
-                        # We should probably let strict merge handle the error if _type_ persists?
-                        # Or we should remove it?
-                        # _map_merge merges src INTO dest.
-                        # If src has _type_, and we merge it, dest will have _type_ (if allowed).
-                        # Structured configs usually don't allow unknown keys.
-                        # So we MUST remove `_type_` from the input if we consume it here.
-                        pass
-
-                        from omegaconf import OmegaConf
-
-                        # Check if current type is already correct?
-                        current_type = dest._metadata.object_type
-                        if current_type is not origin:
-                            new_node = OmegaConf.structured(origin)
-                            dest._set_value(new_node)
-
-                        # To remove _type_ from src during merge, we need to manipulate src.
-                        # src is a BaseContainer (DictConfig).
-                        # We can't easily modify src if it's referenced elsewhere.
-                        # But _map_merge takes `src`.
-                        # We can delete `_type_` from `src` if it's there.
-                        # But we should only delete it if we used it?
-                        # If we delete it from src, we modify the source object which is bad.
-                        # We should construct a new src without `_type_` if needed.
-                        # OR we rely on `_type_` being ignored? use `open_dict` context?
-                        # No, validation will fail.
-
-                        # Let's check `src` type. It is DictConfig.
-                        # We can create a shallow copy?
-                        # Or just ignore it during the iteration below?
-                        # The loop below iterates `src_items`. We can filter `_type_`.
-                        break
 
         def expand(node: Container) -> None:
             rt = node._metadata.ref_type
@@ -841,7 +784,7 @@ class BaseContainer(Container, ABC):
                 if isinstance(raw, dict) and "_type_" in raw:
                     try:
                         existing = self._get_node(key, validate_access=False)
-                    except Exception:
+                    except Exception:  # pragma: no cover
                         existing = None
                     from omegaconf.dictconfig import DictConfig
 
@@ -979,7 +922,7 @@ class BaseContainer(Container, ABC):
             key: Optional[Union[DictKeyType, int, slice]],
         ) -> str:
             if key is None:
-                return full_key
+                return full_key  # pragma: no cover
 
             if isinstance(key, slice):
                 key = _slice_to_str(key)

@@ -1199,5 +1199,5 @@ def test_set_invalid_union_value() -> None:
     with raises(ValidationError):
         cfg.dict = {"a": 4, "b": True, "c": "foo"}
     assert cfg == OmegaConf.structured(DictUnion)
-    assert isinstance(cfg.dict._get_node("a"), UnionNode)  # type: ignore
-    assert cfg.dict.a == 1  # type: ignore
+    assert isinstance(cfg.dict._get_node("a"), UnionNode)
+    assert cfg.dict.a == 1

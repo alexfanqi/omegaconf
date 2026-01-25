@@ -38,7 +38,7 @@ class _NestedContainerUnionCfg:
     lst: List[Dict[str, Union[_AmbigA, _AmbigB]]] = field(default_factory=list)
 
 
-def test_union_explicit_type_in_list_roundtrip():
+def test_union_explicit_type_in_list_roundtrip() -> None:
     cfg = OmegaConf.structured(_ListOfUnionCfg)
 
     full_name_b = f"{_AmbigB.__module__}.{_AmbigB.__qualname__}"
@@ -61,7 +61,7 @@ def test_union_explicit_type_in_list_roundtrip():
     assert "_type_" not in cfg2.lst[0]
 
 
-def test_union_explicit_type_in_dict_roundtrip():
+def test_union_explicit_type_in_dict_roundtrip() -> None:
     cfg = OmegaConf.structured(_DictOfUnionCfg)
 
     full_name_b = f"{_AmbigB.__module__}.{_AmbigB.__qualname__}"
@@ -171,7 +171,7 @@ def test_union_in_container_type_field_conflict_is_data() -> None:
     assert "_type_: Other" in dump
 
 
-def test_union_explicit_type_serialization():
+def test_union_explicit_type_serialization() -> None:
     """
     Test that explicit type information (_type_) is serialized for Union fields,
     and used during deserialization to restore the correct type.
@@ -220,7 +220,7 @@ def test_union_explicit_type_serialization():
     assert "_type_" not in cfg_new.backbone
 
 
-def test_union_explicit_type_conflict():
+def test_union_explicit_type_conflict() -> None:
     """
     Test that if a Dataclass explicitly defines a '_type_' field,
     OmegaConf respects it as a data field and does NOT use it for
@@ -286,7 +286,7 @@ class UnionTypeConfig:
     u: Union[UnionTypeA, UnionTypeB] = MISSING
 
 
-def test_union_merge_with_type_field():
+def test_union_merge_with_type_field() -> None:
     """
     Test that we can use the `_type_` field to tell OmegaConf which Union subclass
     to use when merging a dict.
@@ -333,7 +333,7 @@ def test_union_merge_with_type_field():
     assert merged_a.u._metadata.object_type == UnionTypeA
 
 
-def test_union_merge_bad_list():
+def test_union_merge_bad_list() -> None:
     """
     Regression test for: KeyValidationError: ListConfig indices must be integers or slices, not str
     When merging a list into a UnionNode, it should raise ValidationError (incompatible type),
