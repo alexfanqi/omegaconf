@@ -300,16 +300,14 @@ class Node(ABC):
             resolved_node_cache=resolved_node_cache,
         )
 
-    def _get_root(self) -> "Container":
+    def _get_root(self) -> "Box":
         root: Optional[Box] = self._get_parent()
         if root is None:
-            assert isinstance(self, Container)
-            return self
-        assert root is not None and isinstance(root, Box)
+            return self  # type: ignore
+        assert isinstance(root, Box)
         while root._get_parent() is not None:
             root = root._get_parent()
-            assert root is not None and isinstance(root, Box)
-        assert root is not None and isinstance(root, Container)
+            assert isinstance(root, Box)
         return root
 
     def _is_missing(self) -> bool:
@@ -452,7 +450,7 @@ class Container(Box):
     @abstractmethod
     def __getitem__(self, key_or_index: Any) -> Any: ...
 
-    def _resolve_key_and_root(self, key: str) -> Tuple["Container", str]:
+    def _resolve_key_and_root(self, key: str) -> Tuple["Box", str]:
         orig = key
         if not key.startswith("."):
             return self._get_root(), key
@@ -700,6 +698,9 @@ class Container(Box):
             raise InterpolationKeyError(
                 f"ConfigKeyError while resolving interpolation: {exc}"
             ).with_traceback(sys.exc_info()[2])
+
+        if not isinstance(root_node, Container):
+            raise InterpolationKeyError(f"Interpolation key '{inter_key}' not found")
 
         try:
             parent, last_key, value = root_node._select_impl(
@@ -998,6 +999,7 @@ class UnionNode(Box):
                         f"Value '$VALUE' is incompatible with type hint '{type_str(type_hint)}'"
                     )
             self.__dict__["_content"] = value
+            return
         elif isinstance(value, (list, tuple, ListConfig)):
             # Only try List[...] candidates — keeps primitive members out of container
             # dispatch and makes ambiguity an error instead of silent first-match.
@@ -1172,12 +1174,14 @@ class UnionNode(Box):
         self,
         throw_on_resolution_failure: bool,
         memo: Optional[Set[int]] = None,
+        resolved_node_cache: Optional[Dict[int, "Node"]] = None,
     ) -> Optional["Node"]:
         content = self.__dict__["_content"]
         if isinstance(content, Node):
             return content._dereference_node_impl(
                 throw_on_resolution_failure=throw_on_resolution_failure,
                 memo=memo,
+                resolved_node_cache=resolved_node_cache,
             )
 
         if not _is_special(content) or not _is_interpolation(content):
@@ -1186,6 +1190,7 @@ class UnionNode(Box):
         res = super()._dereference_node_impl(
             throw_on_resolution_failure=throw_on_resolution_failure,
             memo=memo,
+            resolved_node_cache=resolved_node_cache,
         )
 
         if res is self:
