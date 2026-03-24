@@ -11,8 +11,8 @@ OmegaConf setup
 import os
 import pathlib
 
-import pkg_resources
 import setuptools
+from packaging.requirements import Requirement
 
 from build_helpers.build_helpers import (
     ANTLRCommand,
@@ -25,8 +25,9 @@ from build_helpers.build_helpers import (
 
 with pathlib.Path("requirements/base.txt").open() as requirements_txt:
     install_requires = [
-        str(requirement)
-        for requirement in pkg_resources.parse_requirements(requirements_txt)
+        str(Requirement(line.strip()))
+        for line in requirements_txt
+        if line.strip() and not line.strip().startswith("#")
     ]
 
 
