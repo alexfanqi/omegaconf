@@ -749,6 +749,7 @@ def is_supported_union_annotation(obj: Any) -> bool:
 
     return all(
         is_primitive_type_annotation(arg)
+        or is_literal_annotation(arg)
         or is_container_annotation(arg)
         or is_structured_config(arg)
         or arg in (Any, DictConfig, ListConfig)
