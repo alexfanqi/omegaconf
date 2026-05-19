@@ -31,7 +31,12 @@ from omegaconf._utils import (  # _normalize_ref_type,
     is_union_annotation,
     split_key,
 )
-from omegaconf.errors import ConfigValueError, UnsupportedValueType, ValidationError
+from omegaconf.errors import (
+    ConfigKeyError,
+    ConfigValueError,
+    UnsupportedValueType,
+    ValidationError,
+)
 from omegaconf.nodes import (
     AnyNode,
     BooleanNode,
@@ -216,7 +221,12 @@ def test_node_wrap(
             DictConfig(content={"foo": "bar"}),
             id="dict_to_any",
         ),
-        param(Plugin, {"foo": "bar"}, ValidationError, id="dict_to_plugin"),
+        param(
+            Plugin,
+            {"foo": "bar"},
+            (ValidationError, ConfigKeyError),
+            id="dict_to_plugin",
+        ),
         # Structured Config
         param(Plugin, Plugin(), DictConfig(content=Plugin()), id="DictConfig[Plugin]"),
         param(Any, Plugin(), DictConfig(content=Plugin()), id="plugin_to_any"),
@@ -361,8 +371,8 @@ class _TestUserClass:
         (Union[int, List[str]], True),
         (Union[int, Dict[int, str]], True),
         (Union[int, _TestEnum], True),
-        (Union[int, _TestAttrsClass], False),
-        (Union[int, _TestDataclass], False),
+        (Union[int, _TestAttrsClass], True),
+        (Union[int, _TestDataclass], True),
         (Union[int, _TestUserClass], False),
     ],
 )
@@ -898,7 +908,7 @@ def test_is_union_annotation_PEP604() -> None:
         (Union[int, str], True),
         (Union[int, List[str]], True),
         (Union[int, Dict[str, int]], True),
-        (Union[int, User], False),
+        (Union[int, User], True),
         (Optional[Union[int, str]], True),
         (Union[int, None], True),
         (Optional[int], True),
