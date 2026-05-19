@@ -49,6 +49,7 @@ from ._utils import (
     is_primitive_container,
     is_primitive_dict,
     is_primitive_list,
+    is_sequence_annotation,
     is_structured_config,
     is_tuple_annotation,
     is_union_annotation,
@@ -1467,9 +1468,11 @@ def _node_wrap(
             key_type=key_type,
             element_type=element_type,
         )
-    elif (is_list_annotation(ref_type) or is_tuple_annotation(ref_type)) or (
-        type(value) in (list, tuple) and ref_type is Any
-    ):
+    elif (
+        is_list_annotation(ref_type)
+        or is_tuple_annotation(ref_type)
+        or is_sequence_annotation(ref_type)
+    ) or (type(value) in (list, tuple) and ref_type is Any):
         element_type = get_list_element_type(ref_type)
         node = ListConfig(
             content=value,
