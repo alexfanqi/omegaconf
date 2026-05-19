@@ -340,10 +340,14 @@ def test_interpolation_type_validated_ok(
             "age",
             raises(
                 InterpolationValidationError,
-                match=re.escape(dedent("""\
+                match=re.escape(
+                    dedent(
+                        """\
                         Value 'seven' of type 'str' could not be converted to Integer
                             full_key: age
-                        """)),
+                        """
+                    )
+                ),
             ),
             id="type_mismatch_resolver",
         ),

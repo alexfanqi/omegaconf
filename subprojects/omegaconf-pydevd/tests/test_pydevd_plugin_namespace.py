@@ -170,7 +170,9 @@ def _discover_extensions_from_editable_install(
     *,
     install_namespace_paths: bool,
 ) -> list[str]:
-    project_root, support_root, bundled_root = _build_project(tmp_path, OLD_NAMESPACE_INIT)
+    project_root, support_root, bundled_root = _build_project(
+        tmp_path, OLD_NAMESPACE_INIT
+    )
     plugin_root = project_root / "plugin"
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join([str(support_root), str(bundled_root)])

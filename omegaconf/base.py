@@ -1146,27 +1146,27 @@ class UnionNode(Box):
                     key=None,
                     parent=self,
                 )
-                return
+                break
             except ValidationError as e:
                 validation_errors.append(e)
                 continue
+        else:
+            msg = f"Value '$VALUE' of type '$VALUE_TYPE' is incompatible with type hint '{type_str(type_hint)}'"
+            if validation_errors:
+                import textwrap
 
-        msg = f"Value '$VALUE' of type '$VALUE_TYPE' is incompatible with type hint '{type_str(type_hint)}'"
-        if validation_errors:
-            import textwrap
-
-            msg += "\nValidation errors of candidate types:"
-            for e in validation_errors:
-                indented_err = textwrap.indent(str(e), prefix="  - ")
-                # Replace subsequent lines' prefix so only first line has hyphen
-                parts = indented_err.split("\n")
-                if len(parts) > 1:
-                    for i in range(1, len(parts)):
-                        if parts[i].startswith("  - "):
-                            parts[i] = "    " + parts[i][4:]
-                indented_err = "\n".join(parts)
-                msg += f"\n{indented_err}"
-        raise ValidationError(msg)
+                msg += "\nValidation errors of candidate types:"
+                for e in validation_errors:
+                    indented_err = textwrap.indent(str(e), prefix="  - ")
+                    # Replace subsequent lines' prefix so only first line has hyphen
+                    parts = indented_err.split("\n")
+                    if len(parts) > 1:
+                        for i in range(1, len(parts)):
+                            if parts[i].startswith("  - "):
+                                parts[i] = "    " + parts[i][4:]
+                    indented_err = "\n".join(parts)
+                    msg += f"\n{indented_err}"
+            raise ValidationError(msg)
 
     def _dereference_node_impl(
         self,

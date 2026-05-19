@@ -395,7 +395,9 @@ def test_create_float_yaml() -> None:
     #   c_s not parsed as float. antlr does parse as float
     #   e_s and f_s not parsed. antlr does parse as float
     #   h_f and i_f parsed as float. antlr does not parse as float
-    cfg = OmegaConf.create(dedent("""\
+    cfg = OmegaConf.create(
+        dedent(
+            """\
             a_s: 0_e0
             b_i: 0_0
             c_s: 1_0e1_0
@@ -405,7 +407,9 @@ def test_create_float_yaml() -> None:
             g_f: 1_1_2.1
             h_f: 1__2.1
             i_f: 1.2_
-            """))
+            """
+        )
+    )
     assert cfg == {
         "a_s": "0_e0",
         "b_i": 0,
@@ -436,18 +440,22 @@ def test_create_untyped_dict() -> None:
 @mark.parametrize(
     "input_",
     [
-        dedent("""\
+        dedent(
+            """\
             a:
               b: 1
               c: 2
               b: 3
-            """),
-        dedent("""\
+            """
+        ),
+        dedent(
+            """\
             a:
               b: 1
             a:
               b: 2
-            """),
+            """
+        ),
     ],
 )
 def test_yaml_duplicate_keys(input_: str) -> None:
@@ -456,23 +464,27 @@ def test_yaml_duplicate_keys(input_: str) -> None:
 
 
 def test_yaml_aliases_are_allowed_within_default_expansion_limit() -> None:
-    yaml_document = dedent("""\
+    yaml_document = dedent(
+        """\
         a: &A
             x: 1
         b: *A
-        """)
+        """
+    )
     assert OmegaConf.create(yaml_document) == yaml.safe_load(yaml_document)
 
 
 def test_yaml_alias_expansion_limit() -> None:
-    yaml_document = dedent("""\
+    yaml_document = dedent(
+        """\
         lol1: &lol1 "lol"
         lol2: &lol2 [*lol1,*lol1,*lol1,*lol1,*lol1,*lol1,*lol1,*lol1,*lol1]
         lol3: &lol3 [*lol2,*lol2,*lol2,*lol2,*lol2,*lol2,*lol2,*lol2,*lol2]
         lol4: &lol4 [*lol3,*lol3,*lol3,*lol3,*lol3,*lol3,*lol3,*lol3,*lol3]
         lol5: &lol5 [*lol4,*lol4,*lol4,*lol4,*lol4,*lol4,*lol4,*lol4,*lol4]
         lol6: &lol6 [*lol5,*lol5,*lol5,*lol5,*lol5,*lol5,*lol5,*lol5,*lol5]
-        """)
+        """
+    )
     with raises(
         yaml.constructor.ConstructorError,
         match="YAML node expansion.*larger positive integer.*trusted input",
@@ -481,11 +493,13 @@ def test_yaml_alias_expansion_limit() -> None:
 
 
 def test_yaml_alias_expansion_limit_applies_to_mapping_keys() -> None:
-    yaml_document = dedent("""\
+    yaml_document = dedent(
+        """\
         base: &base [0, 1]
         ? *base
         : value
-        """)
+        """
+    )
     with raises(
         yaml.constructor.ConstructorError,
         match="YAML node expansion.*larger positive integer.*trusted input",
@@ -528,10 +542,12 @@ def test_yaml_alias_expansion_limit_can_be_disabled_for_trusted_input() -> None:
 def test_yaml_alias_expansion_limit_can_be_configured_by_environment(
     monkeypatch: Any,
 ) -> None:
-    yaml_document = dedent("""\
+    yaml_document = dedent(
+        """\
         base: &base [0, 1]
         alias: *base
-        """)
+        """
+    )
     monkeypatch.setenv("OMEGACONF_MAX_YAML_EXPANDED_NODES", "8")
     with raises(
         yaml.constructor.ConstructorError,
@@ -554,14 +570,16 @@ def test_yaml_alias_expansion_limit_can_be_disabled_by_environment_for_trusted_i
 def test_yaml_alias_expansion_limit_argument_overrides_environment(
     monkeypatch: Any,
 ) -> None:
-    yaml_document = dedent("""\
+    yaml_document = dedent(
+        """\
         lol1: &lol1 "lol"
         lol2: &lol2 [*lol1,*lol1,*lol1,*lol1,*lol1,*lol1,*lol1,*lol1,*lol1]
         lol3: &lol3 [*lol2,*lol2,*lol2,*lol2,*lol2,*lol2,*lol2,*lol2,*lol2]
         lol4: &lol4 [*lol3,*lol3,*lol3,*lol3,*lol3,*lol3,*lol3,*lol3,*lol3]
         lol5: &lol5 [*lol4,*lol4,*lol4,*lol4,*lol4,*lol4,*lol4,*lol4,*lol4]
         lol6: &lol6 [*lol5,*lol5,*lol5,*lol5,*lol5,*lol5,*lol5,*lol5,*lol5]
-        """)
+        """
+    )
     monkeypatch.setenv("OMEGACONF_MAX_YAML_EXPANDED_NODES", "none")
     with raises(
         yaml.constructor.ConstructorError,
@@ -588,7 +606,8 @@ def test_yaml_alias_expansion_limit_rejects_invalid_argument(
 
 def test_yaml_merge() -> None:
     cfg = OmegaConf.create(
-        dedent("""\
+        dedent(
+            """\
             a: &A
                 x: 1
             b: &B
@@ -598,13 +617,15 @@ def test_yaml_merge() -> None:
                 <<: *B
                 x: 3
                 z: 1
-            """),
+            """
+        ),
     )
     assert cfg == {"a": {"x": 1}, "b": {"y": 2}, "c": {"x": 3, "y": 2, "z": 1}}
 
 
 def test_yaml_merge_override_existing_key_with_reused_anchor() -> None:
-    yaml_document = dedent("""\
+    yaml_document = dedent(
+        """\
         models:
           base: &base
             type: &LLM LargeModel
@@ -621,13 +642,15 @@ def test_yaml_merge_override_existing_key_with_reused_anchor() -> None:
         use:
           <<: *cached
           prompt: test
-        """)
+        """
+    )
     assert OmegaConf.create(yaml_document) == yaml.safe_load(yaml_document)
 
 
 def test_yaml_merge_sequence() -> None:
     cfg = OmegaConf.create(
-        dedent("""\
+        dedent(
+            """\
         a: &A
             x: 1
         b: &B
@@ -635,7 +658,8 @@ def test_yaml_merge_sequence() -> None:
         c:
             <<: [*A, *B]
             z: 3
-        """),
+        """
+        ),
     )
     assert cfg == {"a": {"x": 1}, "b": {"y": 2}, "c": {"x": 1, "y": 2, "z": 3}}
 
@@ -643,28 +667,38 @@ def test_yaml_merge_sequence() -> None:
 def test_yaml_merge_sequence_error() -> None:
     with raises(yaml.constructor.ConstructorError):
         OmegaConf.create(
-            dedent("""\
+            dedent(
+                """\
                 a: &A
                     x: 1
                 c:
                     <<: [*A, 123]
                     z: 3
-                """),
+                """
+            ),
         )
 
 
 def test_yaml_merge_invalid_value() -> None:
     with raises(yaml.constructor.ConstructorError):
-        OmegaConf.create(dedent("""\
+        OmegaConf.create(
+            dedent(
+                """\
             a:
                 <<: 123
-            """))
+            """
+            )
+        )
 
 
 def test_yaml_value_key() -> None:
-    cfg = OmegaConf.create(dedent("""\
+    cfg = OmegaConf.create(
+        dedent(
+            """\
         = : value
-        """))
+        """
+        )
+    )
     assert cfg == {"=": "value"}
 
 
@@ -689,10 +723,12 @@ def test_yaml_value_key() -> None:
     ],
 )
 def test_create_path(path_type: str) -> None:
-    yaml_document = dedent("""\
+    yaml_document = dedent(
+        """\
         foo: !!python/object/apply:pathlib.{}
           - hello.txt
-        """)
+        """
+    )
     yaml_document = yaml_document.format(path_type)
     assert OmegaConf.create(yaml_document) == yaml.unsafe_load(yaml_document)
 
