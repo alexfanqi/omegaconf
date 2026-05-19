@@ -38,6 +38,7 @@ from ._utils import (
     type_str,
 )
 from .errors import (
+    ConfigAttributeError,
     ConfigKeyError,
     ConfigTypeError,
     InterpolationKeyError,
@@ -1037,23 +1038,15 @@ class UnionNode(Box):
                 if type_override in candidates:
                     candidate_ref_type = candidates[type_override]
 
-                # 2. Try resolving fully qualified name
                 if candidate_ref_type is None:
-                    from omegaconf._utils import _get_class
-
-                    try:
-                        resolved_class = _get_class(type_override)
-                        # Check if resolved class is one of the candidates
-                        for cand in ref_type.__args__:
-                            cand_orig = getattr(cand, "__origin__", cand)
-                            if cand_orig == resolved_class:
-                                candidate_ref_type = cand
-                                break
-                    except (ImportError, ValueError):
-                        pass
+                    raise ValidationError(
+                        f"Unsupported _type_ discriminator: {type_override}"
+                    )
 
                 if candidate_ref_type is not None:
                     try:
+                        # Create the node from the candidate class first to ensure defaults are populated
+                        # and object_type is set correctly.
                         node = _node_wrap(
                             value=candidate_ref_type,
                             ref_type=candidate_ref_type,
@@ -1062,11 +1055,15 @@ class UnionNode(Box):
                             parent=self,
                         )
 
+                        # Prepare value for merge: remove _type_ if present to avoid extra key error
+                        # if the target class doesn't have _type_ field.
                         merge_value = value
                         if isinstance(value, dict) and "_type_" in value:
                             merge_value = value.copy()
                             merge_value.pop("_type_")
                         elif isinstance(value, DictConfig) and "_type_" in value:
+                            # DictConfig is mutable but we shouldn't modify the input 'value' if it's referenced elsewhere
+                            # Safe option: convert to dict, pop _type_.
                             from omegaconf import OmegaConf
 
                             merge_value = OmegaConf.to_container(value, resolve=False)
@@ -1080,6 +1077,7 @@ class UnionNode(Box):
                             assert isinstance(node, DictConfig)
                             node.merge_with(merge_value)
                         else:
+                            # Should not happen given outer checks
                             assert False
 
                         self.__dict__["_content"] = node
@@ -1100,12 +1098,6 @@ class UnionNode(Box):
             if isinstance(value, Container):
                 content = self.__dict__.get("_content")
                 if isinstance(content, Container):
-                    from omegaconf.errors import (
-                        ConfigAttributeError,
-                        ConfigKeyError,
-                        ConfigTypeError,
-                    )
-
                     try:
                         content._set_value(value, flags=flags)
                         return
@@ -1235,13 +1227,24 @@ class UnionNode(Box):
 
     def __getitem__(self, key: Any) -> Any:
         resolved = self._maybe_dereference_node()
+        if resolved is None:
+            raise TypeError(f"'{type(self).__name__}' object is not subscriptable")
+
         if resolved is self:
             content = self.__dict__["_content"]
-            if isinstance(content, Node):
+            from omegaconf.basecontainer import BaseContainer
+
+            if isinstance(content, BaseContainer):
                 return content[key]
             raise TypeError(f"'{type(self).__name__}' object is not subscriptable")
 
-        return resolved[key]
+        from omegaconf.basecontainer import BaseContainer
+
+        if isinstance(resolved, UnionNode):
+            return resolved[key]
+        if isinstance(resolved, BaseContainer):
+            return resolved[key]
+        raise TypeError(f"'{type(self).__name__}' object is not subscriptable")
 
     def _set_container_value(
         self,

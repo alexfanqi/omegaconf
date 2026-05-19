@@ -12,35 +12,35 @@ class SequenceConfig:
     mixed: Sequence[int] = (1, 2, 3)
 
 
-def test_sequence_creation():
+def test_sequence_creation() -> None:
     cfg = OmegaConf.structured(SequenceConfig(seq_items=[1, 2, 3]))
     assert cfg.seq_items == [1, 2, 3]
     assert cfg.mixed == [1, 2, 3]  # Tuple converted to List in OmegaConf
 
 
-def test_sequence_assignment_valid():
+def test_sequence_assignment_valid() -> None:
     cfg = OmegaConf.structured(SequenceConfig(seq_items=[1, 2]))
     cfg.seq_items = [3, 4]
-    assert cfg.seq_items == [3, 4]
+    assert list(cfg.seq_items) == [3, 4]
 
     cfg.seq_items = (5, 6)
-    assert cfg.seq_items == [5, 6]
+    assert list(cfg.seq_items) == [5, 6]
 
 
-def test_sequence_assignment_invalid():
+def test_sequence_assignment_invalid() -> None:
     cfg = OmegaConf.structured(SequenceConfig(seq_items=[1, 2]))
     with pytest.raises(ValidationError):
         cfg.seq_items = ["a", "b"]
 
 
-def test_sequence_merge():
+def test_sequence_merge() -> None:
     cfg = OmegaConf.structured(SequenceConfig(seq_items=[1, 2]))
     merge_cfg = OmegaConf.create({"seq_items": [3, 4]})
     res = OmegaConf.merge(cfg, merge_cfg)
     assert res.seq_items == [3, 4]
 
 
-def test_sequence_merge_invalid():
+def test_sequence_merge_invalid() -> None:
     cfg = OmegaConf.structured(SequenceConfig(seq_items=[1, 2]))
     merge_cfg = OmegaConf.create({"seq_items": ["a", "b"]})
     with pytest.raises(ValidationError):
